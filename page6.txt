@@ -1,0 +1,95 @@
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+(a)
+
+(b)
+
+Fig. 5. An illustration of a converged pheromone density by layers: (a) the pheromone density at the home layer 𝑜 = 0 and (b) the converged pheromone density
+at the locker layer 𝑜 = 1.
+
+Eq. (17) ensures that only feasible arc-option triplets (𝑖, 𝑗, 𝑜) are considered and that the probabilities across all valid (𝑗, 𝑜) sums equal
+one.
+
+model. The detailed implementation of the model will be explained in
+the next section.
+Within each iteration, the solutions produced by all worker processes are asynchronously generated and then synchronously aggregated upon their completion. A key mechanism for managing convergence is the stagnation iteration counter (𝐼𝑠𝑡𝑎𝑔 ) which is incremented
+whenever the current iteration fails to discover a new global best solution. Following this aggregation, an elitist strategy is employed: only
+the top-𝑡 ants, identified by their optimal objective values, are permitted to update the global pheromone matrix. By restricting pheromone
+deposition to this elite subset, our model promotes effective exploitation of the search space while significantly reducing the computational
+cost associated with pheromone synchronization.
+Finally, by utilizing a shared-memory architecture for the global
+pheromone matrix, the algorithm eliminates the need to distribute
+copies of the matrix to slave processes. This significantly reduces both
+memory complexity from 𝑂(𝑚 × |𝑁|2 × |𝑂|) to 𝑂(|𝑁|2 × |𝑂|) and the
+overhead associated with inter-process communication.
+
+3.3. Solution representation
+We denote each demand by the pair (𝑖, 𝑜), where 𝑖 ∈ 𝑁𝐶 identifies the customer and 𝑜 ∈ 𝑂 specifies the chosen option. Routes
+are constructed incrementally using a Sequential Insertion Heuristic
+(SIH). Beginning at the depot (𝑖 = 0), we select the next demand
+(𝑗, 𝑜) according to the transition probability defined in Eq. (17). Upon
+inserting each new demand into the route, we update the vehicle’s load
+and the current time. This insertion process continues until adding any
+remaining demand would violate either the vehicle’s capacity or the
+prescribed time windows. At that point, the route is deemed saturated,
+and we initiate a new route by resetting both load and time, modeling
+parallel vehicle deployments.
+As illustrated in Fig. 1, any consecutive demands for that locker are
+aggregated into a single, larger demand. Even though the mathematical
+model introduced by Yu et al. [5] allows multiple revisits to the same
+locker by a vehicle, such an action is unlikely to discover more optimal
+routes. Based on the assumption of the original work, a vehicle will
+perform consolidated drop-off when visiting a locker. Consequently,
+upon revisiting without returning to the depot, the vehicle will incur
+extra mileage for a second trip and consume more of the time budget
+due to the locker’s service time, despite having no packages. As a
+result, to limit the search space to more promising regions and save
+the computational runtime, the heuristic strategy of this work treats
+revisits to the same locker after servicing an intervening location
+as violations, and hence a new vehicle will be deployed. Finally, if
+unsatisfied demands remain once all vehicles have been deployed, the
+overall solution is declared infeasible.
+
+3.5. Complete 3D-PACO algorithm for VRPPL
+The complete implementation of the proposed 3D-PACO algorithm
+for the VRPPL is detailed in Algorithm 1. The algorithm begins by
+initializing the 3D pheromone matrix 𝜏𝑖𝑗𝑜 , which encodes the transition
+desirability from customer 𝑖 to 𝑗 under delivery option 𝑜. A feasibility
+mask 𝑀𝑖𝑗𝑜 is constructed to eliminate invalid transitions. The algorithm
+maintains a global best solution 𝑆 ∗ and its corresponding objective
+value 𝐷∗ , initialized to an empty or infeasible solution.
+While the stagnation counter does not reach its predefined limit,
+the algorithm initiates p threads to construct solutions independently.
+First, the number of ants per thread is adaptively scaled up based on
+stagnation level, with a maximum increase of 8-fold. This is formalized
+by 𝑚 = 𝑚𝑎𝑥[𝑚𝑝 ∗ (𝐼𝑠𝑡𝑎𝑔 +1), 8], where 𝑚𝑝 represents the initial number of
+ants per thread. Each ant constructs a complete delivery route using a
+probabilistic transition rule (Eq. (17)) that combines pheromone values
+with heuristic desirability. Crucially, infeasible solutions are accepted
+during this phase to enable a broader exploration of the solution space,
+recognizing that optimal or near-optimal solutions may emerge from
+transiently infeasible paths.
+The output of ACO is a permutation of served customers and their
+mapping to delivery choices. However, a high pheromone concentration can lead to ants favoring specific trails, thereby restricting the
+exploration to particular regions of the solution space and resulting in
+the generation of repeated or less diverse solutions. To mitigate this
+limitation, each ACO customer permutation is subsequently explored
+using local search operations to create more diverse outcomes, with
+
+3.4. Coarse-grain parallel schema
+Under this 3D representation, the memory complexity is 𝑂(|𝑁|2 ×
+|𝐾| × |𝑂|) with |𝑁| = 𝑁𝐶 + 𝑁0 . In practice, since each ant 𝑘 also
+carries its tour data, the overall memory footprint grows linearly with
+the number of ants 𝑚, which can become prohibitive for large-scale
+instances or fine-grained parallelism. To mitigate these challenges, we
+adopt a coarse-grain master–slave model, as shown in Fig. 6.
+In coarse-grain schema, the Master process maintains the global
+resources, such as the best solution so far, the objective value of such
+solution, and the shared memory pheromone matrix. Meanwhile, each
+slave, corresponding to a processing unit, independently constructs
+complete solutions with objective values, using an enhanced ACO
+6
+
+

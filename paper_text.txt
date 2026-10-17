@@ -1,0 +1,1686 @@
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+Contents lists available at ScienceDirect
+
+Swarm and Evolutionary Computation
+journal homepage: www.elsevier.com/locate/swevo
+
+Parallel ant colony optimization for vehicle routing with parcel lockers
+Phu An Chau a,b , Loan T.T. Nguyen a,b
+a
+b
+
+,∗, Witold Pedrycz c,d , Bay Vo e
+
+School of Computer Science and Engineering, International University, Ho Chi Minh City, Viet Nam
+Vietnam National University, Ho Chi Minh City, Viet Nam
+
+c Department of Electrical and Computer Engineering, University of Alberta, Edmonton AB, Edmonton, T6R 2V4, Alberta, Canada
+d Systems Research Institute, Polish Academy of Sciences, Warsaw, 00-901, Poland
+e Faculty of Information Technology, HUTECH University, Ho Chi Minh City, Viet Nam
+
+ARTICLE
+
+INFO
+
+Keywords:
+VRP
+ACO
+Multidimensional pheromone matrix
+Parcel locker
+Parallel computing
+Adaptive mechanism
+
+ABSTRACT
+The recent surge in Vietnam’s e-commerce has significantly strained urban infrastructure, leading to increased
+last-mile delivery times, higher transportation costs, and diminished customer satisfaction. In response, many
+countries are adopting sustainable solutions like parcel lockers, which facilitate contactless deliveries. However,
+integrating parcel lockers introduces a new variant to the classic routing problem: the Vehicle Routing Problem
+with Parcel Lockers (VRPPL), which demands effective management of multiple delivery options. To address
+this, this research proposes a novel 3D Enhanced Parallel Ant Colony Optimization (3D-PACO) model. Our core
+contribution is the introduction of a pioneering multidimensional pheromone matrix to extend the traditional
+Ant Colony Optimization (ACO) for the VRPPL’s multiple delivery options. Further enhancing this, we propose
+an adaptive mechanism for dynamic ant allocation per thread for economical resource utilization. Finally, we
+adopt a master–slave parallel schema to the VRPPL enabling deployment of a large total number of ants. The
+experimental results on various VRPPL benchmark datasets indicate statistically significant improvements in
+solution quality with tremendous savings in computational runtime of 46.4% to 83.5% across different dataset
+sizes, compared to the original work.
+
+1. Introduction
+To mitigate the urban infrastructure strain, parcel lockers have been
+considered as a sustainable green solution, and have been adopted
+in many countries, including China, England, Poland, etc. [1]. However, the integration of parcel lockers, or pickup and drop-off (PUDO)
+points in general, brings new challenges to the current routing problem. Unlike traditional vehicle routing problems (VRP) in which each
+customer is associated with a unique delivery point, there can be
+multiple alternative locations for a customer’s request. Furthermore,
+these delivery options might be preoccupied or capacity-limited. Such
+challenges demand the routing algorithm not only be able to find nearoptimal permutations of customers to be served but also consider the
+route options.
+Ant Colony Optimization (ACO), proposed by Dorigo [2], is a wellestablished method to solve VRPs, inspired by the foraging behavior of
+ants. In the ACO system, pheromone trails serve as indirect, distributed
+numeric communication channels between ants. Our research identifies
+a gap in the literature where the multidimensional pheromone matrix,
+which can directly model multiple delivery options for each customer,
+
+remains largely unexplored, therefore, explaining the sparsity of research implementing ACO to solve VRPPL or VRPDO. Furthermore,
+since adding multiple dimensions increases the search space, sequential
+ACO models could suffer from expensive computation and memory
+issues, especially for large-scale instances.
+Parallel computing involves distributing computational tasks across
+multiple processors to reduce execution time, leveraging architectures
+like multicore CPUs, GPUs, and distributed systems such as Apache
+Hadoop and Spark [3]. The integration of parallel computing with
+metaheuristics aims to enhance efficiency, scalability, and solution
+quality for large-scale problems, addressing limitations of sequential
+implementations. The inherent population-based nature of ACO makes
+it inherently suitable for parallel processing [4]. The algorithm operates
+with multiple sub-colonies of artificial ants, each of which independently explores the solution space. This independence allows for the
+distribution of the tasks associated with each sub-colony, such as solution construction and evaluation, across multiple processing elements,
+enabling concurrent execution.
+
+∗ Corresponding author at: School of Computer Science and Engineering, International University, Ho Chi Minh City, Viet Nam.
+
+E-mail addresses: chauanphu@gmail.com (P.A. Chau), nttloan@hcmiu.edu.vn (L.T.T. Nguyen), wpedrycz@ualberta.ca (W. Pedrycz), vd.bay@hutech.edu.vn
+(B. Vo).
+https://doi.org/10.1016/j.swevo.2026.102371
+Received 4 July 2025; Received in revised form 14 January 2026; Accepted 18 March 2026
+Available online 28 March 2026
+2210-6502/© 2026 Published by Elsevier B.V.
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+This research offers three key contributions. First, we propose a
+novel 3D pheromone matrix that significantly extends the ACO model’s
+applicability to VRPs featuring multiple delivery options, explicitly
+incorporating customer service preferences as constraints. This ACO
+model is further enhanced with a local search mechanism to effectively
+escape local optima. Second, we implement a master–slave parallel
+architecture designed to efficiently deploy a large population of ants.
+An elitist update strategy not only reduces pheromone synchronization
+runtime at the master process but also enhances exploitation, leading
+to faster convergence and improved solution quality for large-scale
+problems. Finally, to overcome critical scaling and hyperparameter tuning challenges, we introduce an adaptive mechanism for dynamically
+adjusting the number of ants per thread. This significantly enhances
+the model’s robustness and ensures economical computational resource
+utilization.
+The article is further organized as follows. Section 2 reviews the
+problem variants, different approaches to VRPs, ACO extensions, and
+parallel schema for ACO. Section 3 focuses on presenting the 3Dpheromone matrix and the proposed algorithm. In Section 4, we perform analysis on the model’s robustness, scalability, and performance
+comparison to the published results of Yu et al. [5]. Lastly, Section 5
+summarizes the article, states the limitations of the proposed method,
+and suggests future works.
+
+Fig. 1. An example of a VRPPL solution. Nodes 26 and 27 are lockers, and
+the remaining nodes are customer homes.
+
+2. Literature review
+
+2.2. Common approaches to VRPs
+
+2.1. Different variants of VRP
+
+Several techniques have been developed to tackle various routing
+problems and are commonly categorized as exact methods, heuristics,
+and metaheuristics. Early approaches to the VRP relied on exact optimization techniques such as Mixed-Integer Programming formulations
+solved via column generation [10] or branch-and-cut algorithms [11].
+Despite guaranteeing optimality, exact methods become computationally expensive as problem size grows. Heuristic methods, like the Savings Algorithm [12] and Nearest Neighbor [13], deliver good-quality
+solutions quickly but are highly dependent on the problem structure
+and prone to being trapped in local optima.
+Meta-heuristic approaches provide a powerful framework for overcoming the limitations of traditional optimization methods for the
+VRP, guiding the design of effective search strategies that can escape
+local optima. As classified by Stamadianos et al. [14], these methods fall into two primary categories: Population Search and Local
+Search. Population Search methods maintain and iteratively update a
+pool of candidate solutions; this class includes evolutionary algorithms
+(e.g., Genetic Algorithms) and swarm-based algorithms such as Particle
+Swarm Optimization (PSO) [15], Artificial Bee Colony (ABC) [16],
+Cuckoo Search [17] and ACO. Local Search methods, including 2-opt
+and Tabu Search, intensify the search around a single solution using
+neighborhood moves.
+Despite numerous advancements in meta-heuristic and machine
+learning, the VRPPL remains a challenging problem due to its complex characteristics. A key bottleneck is the lack of efficient mapping
+mechanisms to translate customer permutations into delivery options,
+which is crucial for improving solution quality. Yu et al. [5] introduces
+probabilistic assignment based on parameter 𝑝, and nearest neighbor heuristic insertion for the initial solution. While the advantage
+of this method relies on its simplicity and model-agnostic nature,
+it suffers from a significant limitation: the mapping mechanism is
+not adaptive. This static nature requires extensive tuning for 𝑝 and
+can lead to suboptimal solutions. Moreover, the stochastic nature of
+the method can result in significant variation between runs. Nguyen
+et al. [9] propose a two-level allocation algorithm, which employs the
+assignment-first, routing-second mechanism. However, similar to the
+approach by Yu et al. [5], this two-level mechanism also struggles to
+address the intricate relationship effectively between delivery options
+and the corresponding optimal routes (see Fig. 2).
+To tackle these challenges, this research presented a multidimensional pheromone matrix as a model-specific mapping mechanism for
+
+Capacitated VRP (CVRP) is one of the most extensively studied
+variants. CVRP requires that each customer can only be serviced by one
+vehicle, and the total demand of the customers assigned to a vehicle
+should not exceed its capacity. Additionally, there can be constraints
+related to the number of used vehicles or the maximum traveling
+distance of each one. Vehicle Routing with Time Windows (VRPTW)
+introduces additional complexity by assigning a specific time window
+during which each customer must be serviced. While early arrivals are
+allowed, they incur waiting times, and late arrivals are penalized. If
+considered as soft constraints, traveling time along with distance are
+both targets to be optimized in multi-objective problems [6].
+Recent studies have expanded the classic VRP by incorporating
+multiple delivery options, such as home and locker delivery, and by
+addressing new challenges posed by parcel lockers. For instance, Tilk
+et al. [7] introduced the Vehicle Routing Problem with Delivery Options (VRPDO), where customers can choose between home delivery
+or locker delivery. Grabenschweiger et al. [8] proposed the Vehicle
+Routing Problem with Heterogeneous Locker Boxes (VRPHLB), which
+models the heterogeneous sizes and capacities of the lockers. The problem becomes intricate as it requires efficient routing and parcel-packing
+strategies to ensure that parcels are stored within locker constraints.
+Despite reflecting real-world logistics with locker heterogeneity and
+parcel sizing, the research’s model lacks preference flexibility.
+The Vehicle Routing Problem with Parcel Lockers (VRPPL), introduced by Yu et al. [5], further extends these models by introducing
+three types of customers: those requesting home delivery (type-1),
+those requesting locker delivery (type-2), and those who are flexible
+and can accept either option (type-3). The VRPPL model incorporates
+time windows and vehicle capacities, while minimizing the total travel
+distance. The authors extended Solomon’s VRPTW instances to create
+new benchmark datasets for the VRPPL.
+The crowdsourcing problem of [9] exhibits similarity with VRPPL
+due to the incorporation of alternative delivery options and customer
+types. The authors address these delivery options through an
+Allocation-Routing Algorithm (ARA). Specifically, type-2 and type3 customers are assigned to their closest alternative delivery points
+using K-means. Type-1 customers are handled by a two-level allocation
+algorithm. Their results demonstrate that total distribution costs can be
+reduced by recommending customers utilize these alternative delivery
+points.
+2
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+Fig. 2. Meta-heuristic VRPPL approaches: From optimizer to solution representation.
+
+ACO, or any constructive graph-based metaheuristics that can optimize
+the solution quality by effectively capturing the relationships between
+customer permutations and their preferred delivery options.
+2.3. ACO and its extensions
+Based on indirect pheromone trails, the artificial ants in ACO probabilistically construct solutions, and the pheromone trails are subsequently updated through both evaporation and deposition, guided by
+the optimality of the generated solutions. In ACO, a colony of artificial
+ants constructs solutions to a combinatorial problem by traversing a
+graph 𝐺 = (𝑁, 𝐸). Each ant incrementally builds a path by moving
+from node 𝑖 to node 𝑗 with the probability shown in below:
+[ ]𝛼 [ ]𝛽
+⎧
+𝜏𝑖𝑗
+𝜂𝑖𝑗
+⎪
+⎪∑
+[ ]𝛼 [ ]𝛽
+(𝑘)
+𝑃𝑖→𝑗
+= ⎨
+𝜂𝑖𝑢
+(𝑘) 𝜏𝑖𝑢
+𝑢∈𝑖
+⎪
+⎪0
+⎩
+
+if 𝑗 ∈ 𝑖(𝑘) ,
+
+(1)
+
+otherwise,
+
+where:
+
+Fig. 3. Demonstration of ACO decision-making process.
+
+• 𝜏𝑖𝑗 is the pheromone trail intensity on edge (𝑖, 𝑗),
+• 𝜂 = 𝑑1 is the heuristic desirability (e.g., inverse distance),
+
+⎧ 𝑄
+
+𝑖𝑗
+
+• 𝛼, 𝛽 > 0 control the relative influence of pheromone vs. heuristic,
+• 𝑖(𝑘) is the feasible neighborhood for ant 𝑘 at node 𝑖.
+
+⎪
+𝛥𝜏𝑖𝑗(𝑘) = ⎨ 𝐿(𝑘)
+⎪0
+⎩
+
+After all ants complete their tours, pheromone trails are updated via
+𝜏𝑖𝑗 ← (1 − 𝜌) 𝜏𝑖𝑗 +
+
+𝑚
+∑
+
+𝛥𝜏𝑖𝑗(𝑘) ,
+
+if ant 𝑘 used (𝑖, 𝑗),
+
+(3)
+
+otherwise,
+
+where 𝜌 ∈ (0, 1] is the evaporation rate, 𝑄 is a pheromone deposit constant, and 𝐿(𝑘) is the tour length of the ant 𝑘. Eqs. (1) and (2) form the
+backbone of ACO positive feedback and distributed search mechanisms.
+
+(2)
+
+𝑘=1
+
+3
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+Table 1
+Notation for parameters and decision variables.
+
+A key advantage of ACO for the VRPPL, when compared to other
+swarm-based metaheuristics, is its constructive nature and explicit
+incorporation of heuristic desirability. In this context, desirability is
+defined as the inverse of the distance between delivery locations.
+This feature allows ACO to effectively consolidate customers served
+by the same locker, even during the initial search stages, without
+heavy reliance on learned pheromone trails. As demonstrated in Fig.
+3, since the distance between consecutive demands delivered to the
+same locker is approximately zero (a small value is added to the
+denominator to prevent division by zero), the desirability value 𝜂𝑖𝑗
+becomes exceptionally high. This inherent mechanism efficiently guides
+ants to create compact, consolidated routes from the outset.
+An extensive body of research [18] has explored numerous extensions and variants of ACO for addressing both classical routing
+problems and their increasingly complex modern extensions. The first
+ACO algorithm is Ant System (AS) [2], followed by Ant Colony System [19] which introduces the indirect pheromone communication.
+Despite initial encouragement, it was not proven to be competitive
+against other state-of-the-art methods at that time. Elitist strategy
+or Elitist Ant System (EAS), mentioned in the same paper, extends
+AS by only allowing the best solutions to update pheromone trails;
+such solutions can be in within the current iteration or global-best.
+ −  Ant System () can be considered as a further
+improvement of EAS, introducing a limitation interval for pheromone
+value [𝜏𝑚𝑖𝑛 , 𝜏𝑚𝑎𝑥 ] ∀𝜏𝑖𝑗 to balance between exploration and exploitation.
+Recent advancements in ACO frequently involve hybridization with
+other metaheuristics and the incorporation of adaptive strategies. For
+instance, Ren et al. [20] proposed a hybrid approach where ACO constructs initial solutions, which are then enhanced with adaptive tabu
+operators, and global pheromone is updated using Simulated Annealing
+(SA) as a replacement for elitist ants. Similarly, Wan et al. [21] leverage
+SA to refine solutions generated by elite ACO ants, aiming to escape
+local optima. Stodola et al. [22] integrate an adaptive pheromone
+evaporation rate, dynamically adjusted based on information entropy,
+to maintain population diversity. Similarly, Xue [23] employs an Adaptive ACO (ADACO) for the Multi-Depot Vehicle Routing Problem with
+Time Windows (MDVRPTW), where the evaporation rate dynamically
+decreases with iteration count. Finally, Zhou et al. [24] model the
+Traveling Salesman Problem (TSP) as a Reinforcement Learning (RL)
+framework and implement Stochastic Gradient Descent (SGD) as an
+adaptive learning strategy for ACO.
+
+Parameters
+𝑁
+𝐴
+𝑁𝐻𝐶
+𝑁𝐿𝐶
+𝑁𝐻𝐿𝐶
+𝑁𝑃 𝐿
+𝑁𝐶
+𝑁𝐶𝑃 𝐿
+𝑑𝑖
+𝑐𝑖𝑗
+𝑡𝑖𝑗
+[𝑎𝑖 , 𝑏𝑖 ]
+𝑠𝑖
+𝓁𝑖𝑗
+𝜉𝑗
+𝐾
+𝑄
+𝑀
+
+Set of all nodes, including depot, customers, and parcel lockers
+Set of undirected edges connecting nodes
+Set of home delivery customers (type 1)
+Set of locker delivery customers (type 2)
+Set of flexible customers (type 3)
+Set of parcel lockers
+Set of all customers, 𝑁𝐻𝐶 ∪ 𝑁𝐿𝐶 ∪ 𝑁𝐻𝐿𝐶
+Set of customers and parcel lockers, 𝑁𝐶 ∪ 𝑁𝑃 𝐿
+Demand of customer 𝑖 ∈ 𝑁𝐶
+Travel cost between nodes 𝑖 and 𝑗
+Travel time between nodes 𝑖 and 𝑗
+Time window for service at node 𝑖 ∈ 𝑁𝑃 𝐿
+Service duration at node 𝑖 ∈ 𝑁𝑃 𝐿
+Binary parameter: 1 if the customer 𝑖 chooses a locker 𝑗, 0 otherwise
+Capacity of parcel locker 𝑗 ∈ 𝑁𝑃 𝐿 (omitted in our model)
+Set of vehicles
+Maximum capacity of each vehicle
+A sufficiently large constant for time-dependent constraints
+
+Decision variables
+𝑥𝑖𝑗𝑘
+ℎ𝑖
+𝑙𝑖
+𝑦𝑖𝑗
+𝜇𝑖𝑘
+𝜕𝑘0
+𝑣𝑘
+𝜓𝑗𝑘
+
+1 if the vehicle 𝑘 travels from node 𝑖 to node 𝑗, 0 otherwise
+1 if the customer 𝑖 receives home delivery, 0 otherwise
+1 if the customer 𝑖 receives locker delivery, 0 otherwise
+1 if the customer 𝑖 is assigned to a locker 𝑗, 0 otherwise
+Time vehicle 𝑘 starts service at node 𝑖
+Departure time of vehicle 𝑘 from the depot
+Time vehicle 𝑘 completes its final delivery
+Total demand loads vehicle 𝑘 delivers to locker 𝑗
+
+3. Methodology
+3.1. Mathematical model
+The Vehicle Routing Problem with Parcel Lockers (VRPPL) is formulated following the original model of Yu et al. [5] without further
+extensions. As shown in Table 1, in this problem, a homogeneous fleet
+of vehicles operates from a central depot to serve customer demands
+either at their homes or at parcel locker stations. The delivery network
+is represented as an undirected graph 𝐺 = (𝑁, 𝐴), where 𝑁 is the set
+of nodes and 𝐴 is the set of edges between nodes.
+Customers are divided into three types:
+1. Home delivery customers (type 1) who must receive deliveries
+at home,
+2. Locker delivery customers (type 2) who must receive deliveries
+at a parcel locker,
+3. Flexible customers (type 3) who can receive deliveries either
+at home or at a parcel locker.
+
+2.4. Parallel computing in ACO
+Parallel Ant Colony Optimization (PACO) has proven effective for
+solving large-scale combinatorial optimization problems such as the
+VRP. Pedemonte et al. [25] provided an extensive taxonomy of parallel ACO implementations, detailing diverse schemas such as master–
+slave (coarse-grain, medium-grain, and fine-grain), multi-colony, cellular, parallel independent runs, and hybrid models, each characterized by distinct communication and interaction mechanisms. ACO can
+be parallelized across various architectures, including multicore-SIMD
+CPUs [26], cloud computing environments [27], and GPUs [28,29].
+One of the sub-categories of master–slave schema is coarse-grain,
+which assigns complete solution construction and evaluation tasks
+to individual slave processes, which periodically communicate their
+results back to a master process that maintains global pheromone
+information [30]. Its straightforward implementation has shown robust
+scalability and reduced computational overhead, making it particularly suitable for large-scale VRP instances. Furthermore, shared memory [31] suggests effectiveness in managing global resources between
+master and slaves, not only reduces communication overhead but also
+the computational memory required.
+
+Parcel lockers are subject to time windows for service and predefined service durations. Each vehicle has a maximum load capacity
+and must start and end its route at the depot. The objective is to
+minimize the total travel distance while satisfying vehicle capacity and
+time-window constraints.
+In the study of VRPPL and VRP generally, each delivery node can
+be annotated by 𝑖 for departure node or 𝑗 for the destination node.
+The depot within the delivery graph 𝐺 is usually assigned the index
+0, 𝑁0 = {0}. For instance, 𝑥𝑖0𝑘 will be interpreted as the vehicle 𝑘
+returning to the depot after servicing the customer 𝑖. While there can
+be multiple indices for the depots in the field of Multi-Depot VRP
+(MD-VRP), this study focuses on the single-depot case. As a result, the
+customer nodes’ index will be denoted as 𝑖, 𝑗 ∈ {1, … , 𝑛𝐶 } with 𝑛𝐶 is
+the number of customers in 𝑁𝐶 .
+The main objective is to minimize the total travel distance of all
+vehicles:
+∑∑∑
+𝐷=
+𝑐𝑖𝑗 𝑥𝑖𝑗𝑘
+(4)
+𝑘∈𝐾 𝑖∈𝑁 𝑗∈𝑁
+
+4
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+(a)
+
+(b)
+
+Fig. 4. A visualization of a 3D pheromone matrix: (a) the initial pheromone density and (b) the pheromone density after being converged. The matrix has 3
+dimensions: 𝑖-axis represents the departure delivery node index (𝑖 ∈ {0, … , 𝑛𝐶 }), 𝑗-axis represents the destination delivery node index (𝑖 ∈ {0, … , 𝑛𝐶 }) and 𝑜-axis
+represents the delivery options at each delivery node (𝑜 ∈ {0, 1}).
+
+As our study follows the original model [5] without further extensions, we present only the key constraints. Constraints (5)–(10) guarantee that each customer is served exactly once, either at home or at a
+parcel locker, in accordance with their specified delivery preference:
+∑ ∑
+𝑥𝑖𝑗𝑘 = 1,
+∀𝑖 ∈ 𝑁𝐻𝐶
+(5)
+
+it encodes only the desirability of traversing arc (𝑖, 𝑗), not which delivery options (e.g., home, locker type) should be used. [5] addressed
+this by assigning delivery modes at random, however, this approach
+has three major drawbacks. Firstly, it requires careful manual tuning
+of the random-assignment probabilities regarding the problem scale.
+Secondly, it breaks down when there are more than two delivery
+options, forcing the model to default to ‘‘nearest locker’’ even if that is
+suboptimal. Thirdly, it is inherently unstable: the optimal customer permutation may be discovered but still fail to deliver efficiently because
+the randomly chosen mode may not match the best service option.
+Addressing these limitations, this study proposes a 3D pheromone
+matrix 𝜏𝑖𝑗𝑜 , as shown in Fig. 4, that explicitly tracks and learns the
+efficacy of each delivery option 𝑜 for the customer 𝑗, enabling ants
+to make jointly optimized routing and mode decisions without manual
+tuning or restrictive assumptions.
+To represent delivery-option effectiveness, the 2D pheromone matrix is extended to a three-dimensional tensor: 𝜏𝑖𝑗𝑜 , 𝑖, 𝑗 ∈ 𝑁𝐶 , 𝑜 ∈ 𝑂.
+The 3D matrix introduces 𝑂 as a set the alternative delivery options
+(e.g., home delivery, locker 1, locker 2, . . . ). Each element 𝜏𝑖𝑗𝑜 measures
+the desirability for the vehicle 𝑘 to travel from the customer 𝑖 and
+serve the customer 𝑗 via option 𝑜. Since VRPPL only considers two
+delivery options (home delivery and nearest locker delivery), we can
+simplify 𝑂 to be 0 if home delivery is chosen and 1 if locker delivery is
+selected. A key advantage of the ACO family in comparison with other
+swarm-based metaheuristics is its decision interpretability, using the
+pheromone density, as shown in Fig. 5. The brighter color represents
+the higher density, thus indicating a higher probability that the ant
+agent will choose such an arc.
+A feasibility mask 𝑀𝑖𝑗𝑜 ∈ {0, 1} is applied to enforce both homedelivery and locker-delivery constraints. 𝑀𝑖𝑗1 = 0, ∀𝑖 ∈ 𝑁𝐶 If the
+customer 𝑗 is type I, and 𝑀𝑖𝑗0 = 0, ∀𝑖 ∈ 𝑁𝐶 if the customer 𝑗 is type
+II. Before computing transition probabilities, we zero out all infeasible
+entries by masking 𝜏̃𝑖𝑗𝑜 = 𝜏𝑖𝑗𝑜 × 𝑀𝑖𝑗𝑜 . An advantage of the feasibility
+mask is that it only needs to be applied once during initialization, since
+a zeroed-out node will have no probability of being visited.
+Both transitional probabilities and the pheromone update function
+are generalized for a 3D matrix. The generalized transition probability
+is given by:
+
+𝑘∈𝐾 𝑗∈𝑁
+
+∑ ∑
+
+𝑥𝑖𝑗𝑘 ≤ ℎ𝑖 ,
+
+∀𝑖 ∈ 𝑁𝐻𝐿𝐶
+
+(6)
+
+𝑥𝑖𝑗𝑘 = 0,
+
+∀𝑖 ∈ 𝑁𝐿𝐶
+
+(7)
+
+ℎ𝑖 + 𝑙𝑖 = 1,
+
+∀𝑖 ∈ 𝑁𝐶
+
+(8)
+
+ℎ𝑖 = 1,
+
+∀𝑖 ∈ 𝑁𝐻𝐶
+
+(9)
+
+𝑙𝑖 = 1,
+
+∀𝑖 ∈ 𝑁𝐿𝐶
+
+(10)
+
+𝑘∈𝐾 𝑗∈𝑁
+
+∑ ∑
+
+𝑘∈𝐾 𝑗∈𝑁
+
+Constraints (11) and (12) ensure that the total load to customer homes
+and consolidated demands to the lockers (𝜓𝑗𝑘 ) carried by each vehicle
+𝑘 do not exceed its capacity 𝑄:
+∑
+∑
+𝜓𝑗𝑘 =
+𝑦𝑖𝑗 × 𝑑𝑖 ,
+∀𝑗 ∈ 𝑁𝑃 𝐿
+(11)
+𝑘∈𝐾
+
+∑ ∑
+
+𝑖∈𝑁𝐿𝐶 ∪𝑁𝐻𝐿𝐶
+
+𝑑𝑗 × 𝑥𝑖𝑗𝑘 +
+
+𝑖∈𝑁 𝑗∈𝑁𝐶
+
+∑
+
+∑
+
+𝜓𝑚𝑘 𝑥𝑝𝑚𝑘 ≤ 𝑄,
+
+∀𝑘 ∈ 𝐾
+
+(12)
+
+𝑝∈𝑁 𝑚∈𝑁𝑃 𝐿
+𝑝≠𝑚
+
+𝑖≠𝑗
+
+Constraints (13)–(15) track the arrival time at each visited node, while
+Constraint (16) ensures that the delivery time windows are respected
+for home-delivery customers:
+𝜕𝑘0 + 𝑡0𝑖 − 𝜇𝑖𝑘 ≤ 𝑀(1 − 𝑥0𝑖𝑘 ),
+
+∀𝑘 ∈ 𝐾, 𝑖 ∈ 𝑁𝐶𝑃 𝐿
+
+(13)
+
+𝜇𝑖𝑘 + 𝑠𝑖 + 𝑡𝑖𝑗 − 𝜇𝑗𝑘 ≤ 𝑀(1 − 𝑥𝑖𝑗𝑘 ),
+
+∀𝑘 ∈ 𝐾, 𝑖 ∈ 𝑁𝐶𝑃 𝐿 , 𝑗 ∈ 𝑁𝐶𝑃 𝐿
+
+(14)
+
+𝜇𝑗𝑘 − 𝑣𝑘 ≤ 𝑀(1 − 𝑥𝑗0𝑘 ),
+∑
+𝑎𝑖 × ℎ𝑖 ≤
+𝜇𝑖𝑘 ≤ 𝑏𝑖 × ℎ𝑖 ,
+
+∀𝑗 ∈ 𝑁𝐶𝑃 𝐿 , 𝑘 ∈ 𝐾
+
+(15)
+
+∀𝑖 ∈ 𝑁𝐻𝐶 , 𝑘 ∈ 𝐾
+
+(16)
+
+𝑘∈𝐾
+
+Despite the mathematical model of the original paper defines 𝜉𝑗
+as the limited capacity of each locker, the published dataset does not
+include this information. Therefore, we also omit the locker capacity
+constraint and primarily focus on operational costs such as vehicle
+capacity and time windows.
+
+[ (𝑘) ]𝛼 [ ]𝛽
+⎧
+𝜏̃𝑖𝑗𝑜
+𝜂𝑖𝑗𝑜
+⎪
+(𝑘)
+⎪∑
+[ (𝑘) ]𝛼 [
+]𝛽 , if 𝑗 ∈ 𝑖
+∑
+(𝑘)
+𝑃𝑖→𝑗,𝑜 = ⎨
+𝜏
+̃
+𝜂
+′
+(𝑘)
+′
+𝑖𝑢𝑜
+𝑜 ∈𝑂 𝑖𝑢𝑜′
+𝑢∈𝑖
+⎪
+⎪0,
+otherwise
+⎩
+
+3.2. 3D pheromone matrix
+Despite widely applied, the traditional 2D pheromone matrix 𝜏𝑖𝑗
+cannot distinguish among multiple delivery options for each customer:
+5
+
+(17)
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+(a)
+
+(b)
+
+Fig. 5. An illustration of a converged pheromone density by layers: (a) the pheromone density at the home layer 𝑜 = 0 and (b) the converged pheromone density
+at the locker layer 𝑜 = 1.
+
+Eq. (17) ensures that only feasible arc-option triplets (𝑖, 𝑗, 𝑜) are considered and that the probabilities across all valid (𝑗, 𝑜) sums equal
+one.
+
+model. The detailed implementation of the model will be explained in
+the next section.
+Within each iteration, the solutions produced by all worker processes are asynchronously generated and then synchronously aggregated upon their completion. A key mechanism for managing convergence is the stagnation iteration counter (𝐼𝑠𝑡𝑎𝑔 ) which is incremented
+whenever the current iteration fails to discover a new global best solution. Following this aggregation, an elitist strategy is employed: only
+the top-𝑡 ants, identified by their optimal objective values, are permitted to update the global pheromone matrix. By restricting pheromone
+deposition to this elite subset, our model promotes effective exploitation of the search space while significantly reducing the computational
+cost associated with pheromone synchronization.
+Finally, by utilizing a shared-memory architecture for the global
+pheromone matrix, the algorithm eliminates the need to distribute
+copies of the matrix to slave processes. This significantly reduces both
+memory complexity from 𝑂(𝑚 × |𝑁|2 × |𝑂|) to 𝑂(|𝑁|2 × |𝑂|) and the
+overhead associated with inter-process communication.
+
+3.3. Solution representation
+We denote each demand by the pair (𝑖, 𝑜), where 𝑖 ∈ 𝑁𝐶 identifies the customer and 𝑜 ∈ 𝑂 specifies the chosen option. Routes
+are constructed incrementally using a Sequential Insertion Heuristic
+(SIH). Beginning at the depot (𝑖 = 0), we select the next demand
+(𝑗, 𝑜) according to the transition probability defined in Eq. (17). Upon
+inserting each new demand into the route, we update the vehicle’s load
+and the current time. This insertion process continues until adding any
+remaining demand would violate either the vehicle’s capacity or the
+prescribed time windows. At that point, the route is deemed saturated,
+and we initiate a new route by resetting both load and time, modeling
+parallel vehicle deployments.
+As illustrated in Fig. 1, any consecutive demands for that locker are
+aggregated into a single, larger demand. Even though the mathematical
+model introduced by Yu et al. [5] allows multiple revisits to the same
+locker by a vehicle, such an action is unlikely to discover more optimal
+routes. Based on the assumption of the original work, a vehicle will
+perform consolidated drop-off when visiting a locker. Consequently,
+upon revisiting without returning to the depot, the vehicle will incur
+extra mileage for a second trip and consume more of the time budget
+due to the locker’s service time, despite having no packages. As a
+result, to limit the search space to more promising regions and save
+the computational runtime, the heuristic strategy of this work treats
+revisits to the same locker after servicing an intervening location
+as violations, and hence a new vehicle will be deployed. Finally, if
+unsatisfied demands remain once all vehicles have been deployed, the
+overall solution is declared infeasible.
+
+3.5. Complete 3D-PACO algorithm for VRPPL
+The complete implementation of the proposed 3D-PACO algorithm
+for the VRPPL is detailed in Algorithm 1. The algorithm begins by
+initializing the 3D pheromone matrix 𝜏𝑖𝑗𝑜 , which encodes the transition
+desirability from customer 𝑖 to 𝑗 under delivery option 𝑜. A feasibility
+mask 𝑀𝑖𝑗𝑜 is constructed to eliminate invalid transitions. The algorithm
+maintains a global best solution 𝑆 ∗ and its corresponding objective
+value 𝐷∗ , initialized to an empty or infeasible solution.
+While the stagnation counter does not reach its predefined limit,
+the algorithm initiates p threads to construct solutions independently.
+First, the number of ants per thread is adaptively scaled up based on
+stagnation level, with a maximum increase of 8-fold. This is formalized
+by 𝑚 = 𝑚𝑎𝑥[𝑚𝑝 ∗ (𝐼𝑠𝑡𝑎𝑔 +1), 8], where 𝑚𝑝 represents the initial number of
+ants per thread. Each ant constructs a complete delivery route using a
+probabilistic transition rule (Eq. (17)) that combines pheromone values
+with heuristic desirability. Crucially, infeasible solutions are accepted
+during this phase to enable a broader exploration of the solution space,
+recognizing that optimal or near-optimal solutions may emerge from
+transiently infeasible paths.
+The output of ACO is a permutation of served customers and their
+mapping to delivery choices. However, a high pheromone concentration can lead to ants favoring specific trails, thereby restricting the
+exploration to particular regions of the solution space and resulting in
+the generation of repeated or less diverse solutions. To mitigate this
+limitation, each ACO customer permutation is subsequently explored
+using local search operations to create more diverse outcomes, with
+
+3.4. Coarse-grain parallel schema
+Under this 3D representation, the memory complexity is 𝑂(|𝑁|2 ×
+|𝐾| × |𝑂|) with |𝑁| = 𝑁𝐶 + 𝑁0 . In practice, since each ant 𝑘 also
+carries its tour data, the overall memory footprint grows linearly with
+the number of ants 𝑚, which can become prohibitive for large-scale
+instances or fine-grained parallelism. To mitigate these challenges, we
+adopt a coarse-grain master–slave model, as shown in Fig. 6.
+In coarse-grain schema, the Master process maintains the global
+resources, such as the best solution so far, the objective value of such
+solution, and the shared memory pheromone matrix. Meanwhile, each
+slave, corresponding to a processing unit, independently constructs
+complete solutions with objective values, using an enhanced ACO
+6
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+Fig. 6. Coarse-grain parallel model.
+
+the number of neighbors being 𝐿𝑆. These local search operations are
+the same as those employed by Yu et al. [5], comprising insertion,
+swapping, and inversion.
+Once all processors complete their assigned construction tasks, their
+local solutions are merged into a global solution pool 𝑆iter . The master
+process then selects the top 𝑡 elite solutions from 𝑆iter to perform the
+global pheromone update using Eq. (19):
+⎧ 𝑄
+,
+⎪
+(𝑘)
+𝛥𝜏𝑖𝑗𝑜
+= ⎨ 𝐿(𝑘)
+⎪0,
+⎩
+
+if (𝑖, 𝑗, 𝑜) ∈ solution path of 𝑘
+
+Sections 4.4 and 4.5 discuss the robustness and scalability of 3D-PACO,
+respectively; finally, Section 4.6 compares our performance with the
+original SA of Yu et al. as well as other methods.
+Given that the original work does not benchmark its proposed
+Simulated Annealing against other meta-heuristic methods, we adapted
+several others with the same random locker mapping as Yu et al. [5]
+to ensure consistent comparison. There are other methods, including the Ant Colony Optimization with Tabu Search (ACO-TS) [32],
+Harris Hawk Optimization [33], Adaptive Large Neighborhood Search
+(ALNS) [34] and our Parallel Ant Colony Optimization (PACO), but
+without the multidimensional pheromone matrix. Next, we performed
+a dedicated parameter tuning for this adapted algorithm using Bayesian
+Optimization, consistent with the approach used for 3D-PACO.
+
+(18)
+
+otherwise
+
+𝜏𝑖𝑗𝑜 ← (1 − 𝜌) ⋅ 𝜏𝑖𝑗𝑜 +
+
+∑
+
+(𝑘)
+𝛥𝜏𝑖𝑗𝑜
+
+(19)
+
+𝑘∈𝑡
+
+If the best solution in the current iteration improves upon 𝐷∗ , it
+is saved as the new global best and resets the stagnation counter.
+Otherwise, it will increase the counter. If terminated, the algorithm
+ultimately returns the best solution found and its objective value.
+
+4.1. Data availability
+The datasets used in this research are original benchmark datasets
+from Yu et al. available at the author’s website.1 These datasets are
+derived from Solomon CVRP instances, preserving their geographical
+distribution and customer demands. The author created three sizes:
+small (25 customers, 2 lockers), medium (50 customers, 3 lockers), and
+
+4. Experiments and discussion
+This section is presented as follows: Section 4.1 presents dataset
+availability and benchmarks for comparison; Section 4.2 presents computational and the source code repository for reproduction; Section 4.3
+explains the hyperparameter tuning method for different optimizers;
+
+1
+
+7
+
+https://www.vincentyu.info/data.
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+Table 2
+Tuned parameters of 3D-PACO.
+
+Algorithm 1 3D-PACO Algorithm
+Input: Graph 𝐺 = (𝑁, 𝐸)
+Parameters: 𝛼, 𝛽, 𝜌, 𝑄, 𝑚𝑚𝑖𝑛 (ants per thread), 𝑝 (processors), 𝑡 (top
+elite ants), 𝐼𝑚𝑎𝑥 (max stagnation), 𝐼𝐿𝑆 (local search iterations).
+Output: The best solution 𝑆 ∗ and the corresponding objective value
+𝐷∗
+
+Small
+Medium
+Large
+
+Initialize pheromone matrix 𝜏𝑖𝑗𝑜
+Construct infeasibility mask 𝑀𝑖𝑗𝑜
+𝑆 ∗ ← ∅, 𝐷∗ ← ∞, 𝐼𝑠𝑡𝑎𝑔 ← 0
+while 𝐼𝑠𝑡𝑎𝑔 ≤ 𝐼𝑚𝑎𝑥 do
+𝑆iter ← ∅
+𝑚𝑝 ← 𝑚𝑚𝑖𝑛 ⋅ min(𝐼𝑠𝑡𝑎𝑔 + 1, 8)
+for each processor 𝑗 = 1 to 𝑝 in parallel do
+(𝑗)
+𝑆local
+←∅
+for each ant 𝑎 = 1 to 𝑚𝑝 do
+Construct solution 𝑆𝑎 using the 3D-ACO transition rule
+for 𝐼𝐿𝑆 local search iterations do
+Apply local search (swap, insert, 2-opt) to 𝑆𝑎
+end for
+Evaluate 𝐷𝑆𝑎
+
+𝐼𝑚𝑎𝑥
+
+LS
+
+p
+
+𝛼
+
+𝛽
+
+𝜌
+
+Q
+
+t
+
+10
+30
+50
+
+10
+10
+10
+
+20
+50
+100
+
+64
+64
+64
+
+1.25
+1.25
+1.25
+
+1.0
+1.0
+1.0
+
+0.5
+0.5
+0.5
+
+2.0
+2.0
+2.0
+
+40
+40
+40
+
+4.3. Hyperparameter tuning
+To ensure fair and optimized performance comparisons, the hyperparameters of ACO-TS, ALNS, HHO, and our 3D-PACO model were
+systematically tuned. Bayesian Optimization (BO) [36] was chosen for
+this process, as it offers superior computational efficiency compared to
+exhaustive methods like Grid Search. PACO (without the structured 3D
+matrix) utilized the same parameters as 3D-PACO.
+Given that native C++ implementations for BO are not readily
+available, we leveraged the scikit-optimize library within a Python
+environment to manage the optimization routines. Recognizing the
+substantial computational expense of independently optimizing parameters for all 56 instances within each dataset, we adopted a pragmatic
+approach: five instances were randomly sampled from each dataset.
+For every sampled instance, the average objective distance over five
+independent runs served as the fitness value for the BO algorithm. The
+number of threads used will always be set to the available maximum
+(𝑝 = 64). The tuned set of parameters is shown in Table 2.
+
+(𝑗)
+Add 𝑆𝑎 to 𝑆local
+end for
+end for
+Wait for all 𝑝 processors to finish
+⋃
+(𝑗)
+𝑆iter ← 𝑝𝑗=1 𝑆local
+Sort 𝑆iter by 𝐷
+Select top 𝑡 elite solutions from 𝑆iter
+Update 𝜏𝑖𝑗𝑜 using selected solutions
+Let 𝑆best be the best in 𝑆iter , 𝐷best its cost
+if 𝐷best < 𝐷∗ then
+𝑆 ∗ ← 𝑆best , 𝐷∗ ← 𝐷best
+𝐼𝑠𝑡𝑎𝑔 ← 0
+else
+𝐼𝑠𝑡𝑎𝑔 ← 𝐼𝑠𝑡𝑎𝑔 + 1
+end if
+end while
+return 𝑆 ∗ , 𝐷∗
+
+4.4. Sensitivity analysis
+Next, we employed a One-Factor-At-a-Time (OFAT) approach to analyze the impact of parameter variance across different datasets. Using
+the BO-tuned parameter set as our baseline, we systematically varied
+each parameter within a predefined range while keeping all other
+parameters fixed. The percentage deviation 𝑃 𝐷 (%) was recorded for
+each variation, reflecting the parameter’s influence on the model’s performance. For computational efficiency, 5 instances were randomly selected from each dataset, and the experiment was conducted five times
+on each instance. The performances were aggregated by averaging the
+results across these runs.
+We began with the two parameters that most directly control the
+search budget and sampling effort: the number of ants per thread (𝑚)
+and the maximum allowed stagnation iterations (𝐼). Across all instance
+sizes, these parameters show the clearest trade-off between runtime
+and solution quality: increasing either 𝑚 or 𝐼 raises runtime in an
+approximately linear manner while providing diminishing returns in
+solution cost beyond a moderate threshold (see Fig. 7). In practice,
+this means that modest populations and iteration budgets are sufficient
+to capture most of the obtainable improvement, whereas overly small
+values can be harmful. On our medium (see Fig. 8) and large tests (see
+Fig. 9), we observed dramatic quality degradation when 𝐼 was set too
+low (costs doubled when 𝐼 < 5 on medium and when 𝐼 < 10 on large
+instances), and some cost increases occurred when 𝑚 dropped below
+about 30 on large instances. Thus, when tuning for larger problems, it
+is safer to increase 𝑚 and 𝐼 moderately rather than to scale them down
+to reduce runtime; the observed thresholds are useful starting points
+for a problem-dependent calibration.
+The pheromone-heuristic balance, encapsulated by 𝛼 (pheromone
+importance) and 𝛽 (heuristic importance), exhibits markedly different
+behaviors: 𝛼 has strong, dataset-dependent effects, while 𝛽 is comparatively inert within the ranges we tested. Specifically, very low
+pheromone influence (𝛼 ≤ 0.75) caused severe runtime penalties and
+poorer quality on larger instances. Furthermore, runtime increases of
+roughly 50% to 150% and cost rises of the order of 50% were observed
+on medium/large sets, and on the large set the runtime curve is nonmonotonic with a local minimum near 𝛼 = 1.25. This indicates that
+pheromone strength interacts with problem scale and search stability:
+
+large (100 customers, 5 lockers). Each size includes 56 testing instances
+across three distribution types: clustered (C), random (R), and randomclustered (RC). The locker time window is identical to the depot’s, and
+the service time at a locker is half of a customer’s. A key assumption
+made in this study is that lockers have infinite capacity, as the provided
+datasets do not specify locker constraints.
+The detailed computational benchmark results of Section 4.6 are
+published on Mendeley Data [35]. The dataset includes the best-known
+solutions, average distances, and runtimes for each method across all
+instances. This benchmark serves as a reference for future research in
+VRPPL and related optimization problems.
+4.2. Empirical configuration
+All algorithms and models were implemented in C++ and are available in our GitHub repository2 The model is parallelized with OpenMP
+to support multithreaded execution.
+Experiments were conducted on a computer with an Intel(R)
+Xeon(R) CPU E5-2696 v3 @ 2.30 GHz, 62 GB of RAM, and 36 threads,
+achieving a performance of 196.17 GFLOPS. No GPU acceleration was
+used. The operating system was Ubuntu 24.04.
+
+2
+
+m
+
+https://github.com/chauanphu/routing-PL.
+8
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+Fig. 7. Sensitivity on the small dataset.
+
+too little pheromone leaves the search overly heuristic-driven and
+unstable (longer, oscillatory searches), while a moderate pheromone
+influence helps stabilize convergence. By contrast, 𝛽 produced only
+negligible fluctuations in both runtime and cost (typically under 3%),
+implying that the heuristic used is already informative and that modest
+changes to its weight do not qualitatively alter behavior. The practical
+implication is to prioritize careful tuning of 𝛼 (especially for large
+problems), using a narrow grid around 1.0–1.5, while keeping 𝛽 at
+a reasonable default (e.g., 1–2) and revisiting it only if the heuristic
+definition changes.
+Increasing 𝜌 (faster evaporation) tends to shorten runtime and reintroduce exploration by preventing long-lived reinforcement of suboptimal trails, while very low 𝜌 values permit pheromones to accumulate on
+poor solutions and can cause premature convergence. Our results show
+a steady reduction in runtime with higher 𝜌 values, and we observed
+premature fixation at low values, 𝜌 particularly on the large dataset.
+Practically, this recommends a moderate-to-high evaporation setting
+for complex instances (so that the algorithm can escape plateaus), while
+too-aggressive evaporation should be avoided because it can wash out
+valuable learned information too quickly.
+Two parameters that had comparatively small effects across the
+tested ranges are the pheromone deposit constant 𝑄 and the localsearch (LS) frequency. Variations in 𝑄 produced only small runtime
+and cost fluctuations, suggesting that the absolute scale of pheromone
+updates matters less than the relative distribution of pheromone across
+edges; therefore, 𝑄 may be set proportional to the objective magnitude
+and need not be exhaustively tuned. Local search showed only small
+sensitivity as well, but this hides an important conditional observation: the cost of invoking LS matters. When LS is cheap relative to
+
+the iteration cost, frequent use yields net gains; when expensive, it
+increases runtime with modest benefit. Thus, the sensible rule is to use
+inexpensive or lightweight LS variants more aggressively and reserve
+heavy LS for occasional refinement of elite solutions.
+4.5. Scalability analysis
+Model scalability will be assessed based on speedup (relative to its
+sequential version (𝑝 = 1)), and resource utilization efficiency across
+varying thread counts (8, 16, 32 and 64). The number of ants per thread
+𝑚 is adjusted proportionally (𝑚 = total ants∕𝑝) to maintain a consistent
+global ant population. For instance, with a large-scale dataset and 32
+threads, 𝑚 = 3200∕32 = 100.
+𝑆(𝑝) = 𝑇 (1)∕𝑇 (𝑝)
+
+(20)
+
+𝐸(𝑝) = 𝑆(𝑝)∕𝑝 = 𝑇 (1)∕(𝑝 × 𝑇 (𝑝))
+
+(21)
+
+where 𝑇 (𝑝) is the runtime (measured in seconds) with 𝑝 threads.
+Fig. 10 offers insights into the scalability of the adaptive parallel
+ACO model, revealing distinct behaviors based on problem size. Fig.
+10(a) demonstrates that for small problem instances, gains quickly saturate, peaking around 7–8× speedup with modest thread counts (approx.
+16–20). This rapid plateau is attributed to the increasing dominance
+of parallelization overheads, such as communication and pheromone
+update, over the limited workload. For medium instances, speedup is
+more sustained, reaching about 15× at 64 threads, indicating better
+resource utilization. However, the model’s true strength in scalability
+9
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+Fig. 8. Sensitivity on medium dataset.
+
+is evident with large instances, demonstrating robust scalability, especially for large datasets, achieving over 20× speedup with 64 threads
+despite sublinear scaling.
+Fig. 10(b) further clarifies these trends. For small problems, efficiency sharply declines, confirming the poor utilization of additional
+threads. Medium problems show a more gradual efficiency drop. Critically, large problems maintain significantly higher efficiency across the
+entire range of thread counts, reflecting a much more effective and economical use of parallel computing resources. These findings collectively
+establish the proposed adaptive parallel ACO as a highly promising
+solution for large-scale, computationally intensive VRPPL challenges.
+This indicates that despite the model’s speedup is sub-linear, 3D-PACO
+still display remarkable runtime improvement.
+These findings collectively establish the proposed adaptive parallel
+ACO as a highly promising solution for large-scale, computationally
+intensive VRPPL challenges. This indicates that despite the model’s
+speedup being sublinear, 3D-PACO still displays remarkable runtime
+improvement.
+
+4.6.1. Statistical test against yu et al.
+Since the distance and runtime may vary significantly within each
+dataset, the improvement of our 3D-PACO compared to the original SA
+method will be calculated as percent deviation (PD) of each instance:
+PD(BKS) (%) =
+
+best
+best
+𝐷3D-PACO
+− 𝐷SA
+best
+𝐷SA
+avg
+
+PD(D) (%) =
+
+× 100%
+
+(22)
+
+avg
+
+𝐷3D-PACO − 𝐷SA
+avg
+𝐷SA
+
+× 100%
+
+(23)
+
+𝑇3D-PACO − 𝑇SA
+× 100%
+(24)
+𝑇SA
+For the statistical comparison of model performances, we first conduct a Shapiro–Wilk test for normality on the differences between
+the paired observations to assess their distributional symmetry. Subsequently, a Wilcoxon signed-rank test or a paired t-test will be selected
+based on the outcome of the normality test, with a significance level
+of 𝛼 = 0.05. The primary objective is to test whether our proposed
+3D-PACO model significantly outperforms SA:
+PD(T) (%) =
+
+• 𝐻0 ∶ 𝑃̂𝐷𝑚𝑒𝑡𝑟𝑖𝑐 = 0
+• 𝐻𝑎 ∶ 𝑃̂𝐷𝑚𝑒𝑡𝑟𝑖𝑐 < 0
+
+4.6. Computational results
+
+∑ ̂
+𝑃𝐷
+
+In this experiment, we measure the Wall-Clock Time as the primary
+standard for the solver’s runtimes. Despite CPU Time being the benchmark to compare the algorithmic intensity across different algorithms,
+we argue that logistics stakeholders require near real-time response
+from the solver for making immediate actions; thus, providing the CPU
+Time may cause misleading impressions.
+
+(𝑚𝑒𝑡𝑟𝑖𝑐)
+where 𝑃̂𝐷𝑚𝑒𝑡𝑟𝑖𝑐 =
+(%) represents the average performance
+𝑁
+difference between 3D-PACO and SA. A negative value indicates that
+3D-PACO achieved a better performance for the given metric.
+As shown in Table 3, for small instances, 3D-PACO, while achieving lower average distance and BKS, did not exhibit a statistically
+significant advantage over SA on these metrics, respectively, by both
+
+10
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+Fig. 9. Sensitivity on large dataset.
+
+(a)
+
+(b)
+
+Fig. 10. Scalability Analysis: (a) Speedup and (b) Efficiency across data sizes.
+
+pair t-test and Wilcoxon test. However, PACO achieves statistically
+significant runtime reduction by 46.4% and 𝑝 ≈ 0.
+The performance differentials became more pronounced with increasing dataset complexity. On medium datasets, 3D-PACO significantly surpassed SA in terms of finding the best routes (−1.3%), and
+remarkably reduced wall-clock time by 83.52%. The average distance
+for the medium dataset remained non-significant.
+The most compelling performance advantages for 3D-PACO were
+observed on large datasets. Here, our model consistently delivered
+
+statistically significant improvements across all evaluated metrics: a
+lower average distance (−0.94%, 𝑝 = 0.049), superior BKS (−2.65%) with
+half of the runtime (−49.96%). T-tests were used for BKS and Avg D,
+while Wilcoxon was used for Avg 𝑇 on large datasets.
+Considering the overall aggregated performance, 3D-PACO maintained its significant advantage in average runtime (𝑃̂𝐷 = −59.96%
+𝑝-value 0.001). However, the overall best-known solution and average
+distance differences, while numerically favoring 3D-PACO, did not
+achieve statistical significance (p-values 0.772 for BKS and 0.077 for
+11
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+Table 3
+Summary of statistical test results.
+Dataset
+
+Metric
+
+Avg. PD
+
+Normality test
+(𝑝-value)
+
+Statistical
+test
+
+p-value
+
+Conclusion
+
+Small
+
+BKS
+Avg D
+Avg T
+
+−0.68
+−0.51
+−46.39
+
+0.0000
+0.0000
+0.3680
+
+Wilcoxon
+Wilcoxon
+T-test
+
+0.7721
+0.8178
+0.0000
+
+Not significant
+Not significant
+Significant
+
+Medium
+
+BKS
+Avg D
+Avg T
+
+−1.30
+−0.53
+−83.52
+
+0.0000
+0.0000
+0.0150
+
+Wilcoxon
+Wilcoxon
+Wilcoxon
+
+0.0005
+0.9870
+0.0000
+
+Significant
+Not significant
+Significant
+
+Large
+
+BKS
+Avg D
+Avg T
+
+−2.65
+−0.94
+−49.96
+
+0.5120
+0.5080
+0.0000
+
+T-test
+T-test
+Wilcoxon
+
+0.0000
+0.0490
+0.0000
+
+Significant
+Significant
+Significant
+
+Overall
+
+BKS
+Avg D
+Avg T
+
+−1.54
+−0.66
+−59.96
+
+0.0000
+0.0000
+0.0000
+
+Wilcoxon
+Wilcoxon
+Wilcoxon
+
+0.0000
+0.0770
+0.0000
+
+Significant
+Not significant
+Significant
+
+Denotes the significant difference exists.
+
+Fig. 11. Benchmark comparison on the small dataset.
+
+average distance, respectively), suggesting that while 3D-PACO generally performs better in quality, this improvement is not consistently
+significant across all dataset sizes when aggregated.
+
+two. Despite SA’s clear strength in finding the best solutions, the PACO
+family demonstrates remarkable consistency in average performance:
+the mean distance produced by 3D-PACO is slightly better than SA, and
+PACO (no 3D) remains competitive against ALNS, ACO-TS, and HHO.
+Where PACO clearly outperforms is in efficiency: 3D-PACO completes
+in just over four seconds on average, while PACO without 3D achieves
+the fastest runtime at 2.8 s. In contrast, SA is significantly slower and
+less predictable, ranging from 4 to 18 s depending on the instance.
+Vehicle usage was generally stable across methods, averaging two
+vehicles, but PACO solutions showed tighter distributions.
+When moving to the medium dataset (Fig. 12), 3D-PACO emerges
+as the clear leader across all metrics. It discovers 32 BKS, the highest
+among all solvers, and delivers the lowest average distance (382.6).
+More importantly, 3D-PACO demonstrates strong runtime efficiency,
+solving instances in an average of 26 s, substantially faster than SA
+(166 s), HHO (191 s), and ALNS (103 s). PACO without 3D remains
+competitive in terms of runtime (52 s) but fails to achieve strong
+solution quality, recovering only three BKS and yielding worse average
+
+4.6.2. Benchmark comparison
+To evaluate the effectiveness of the proposed 3D-PACO, we compared it against its non-3D counterpart (PACO), as well as four baselines: SA, ACO-TS, ALNS, and HHO. Performance was assessed using
+three metrics: number of best-known solutions (BKS) recovered, relative deviation from best average distance, and computational efficiency
+in terms of runtime. Figs. 11–13 illustrate the results across the small,
+medium, and large benchmark datasets, while the aggregated statistics
+are summarized in Table 4.
+On the small dataset (Fig. 11), SA maintains its dominance in
+terms of BKS discovery, recovering 31 out of 56 best-known solutions, followed by 3D-PACO with 13. The other metaheuristics trail
+behind, with ACO-TS, ALNS, and HHO each solving roughly eight
+instances, and PACO without the 3D pheromone matrix solving only
+12
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+Fig. 12. Benchmark comparison on the medium dataset.
+
+Fig. 13. Benchmark comparison on the large dataset.
+
+distances. The performance gap between PACO-family methods and the
+rest widens as problem scale increases, highlighting the importance
+of structured pheromone representation for handling larger neighborhoods efficiently. Vehicle usage results further confirm this advantage:
+
+3D-PACO consistently identifies routes with fewer vehicles compared to
+ALNS and HHO, demonstrating better packing and assignment quality.
+On the large dataset (Fig. 13), 3D-PACO solidifies its superiority,
+recovering 46 BKS out of 56 and maintaining the best average distance
+13
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+P.A. Chau et al.
+
+Table 4
+Aggregated performances across datasets.
+Methods
+
+Metrics
+
+Large
+
+Medium
+
+Small
+
+3D-PACO
+
+Runtime (s)
+CPU time (s)
+Average distance
+# Best distance found
+
+266.97
+17,086.08
+693.17
+46
+
+26.08
+1669.12
+382.55
+32
+
+4.08
+261.12
+214.44
+13
+
+SA
+
+Runtime (s)
+CPU time (s)
+Average distance
+# Best distance found
+
+546.40
+546.40
+702.80
+10
+
+165.73
+165.73
+384.82
+22
+
+8.09
+8.09
+215.89
+31
+
+PACO (no 3D)
+
+Runtime (s)
+CPU time (s)
+Average distance
+# Best distance found
+
+322.59
+20,645.76
+756.52
+3
+
+51.82
+3316.48
+400.40
+3
+
+2.81
+179.84
+225.93
+2
+
+ACO-TS
+
+Runtime (s)
+CPU time (s)
+Average distance
+# Best distance found
+
+359.21
+359.21
+792.31
+0
+
+41.34
+41.34
+427.63
+1
+
+4.31
+4.31
+241.19
+8
+
+ALNS
+
+Runtime (s)
+CPU time (s)
+Average distance
+# Best distance found
+
+395.90
+395.90
+808.37
+0
+
+103.46
+103.46
+440.76
+1
+
+5.75
+5.75
+236.52
+7
+
+HHO
+
+Runtime (s)
+CPU time (s)
+Average distance
+# Best distance found
+
+702.69
+702.69
+947.69
+0
+
+191.23
+191.23
+512.61
+0
+
+4.31
+4.31
+241.19
+8
+
+optimize routing and locker assignment simultaneously. Experimental
+results prove that 3D-PACO consistently reduces wall-clock time and
+indicate improved quality on larger datasets compared to Simulated
+Annealing [5] and other metaheuristics, while improvements on small
+datasets are not statistically significant.
+Despite these advantages, the multidimensional pheromone matrix
+remains tied to the ACO framework and incurs additional computational overhead when synchronizing. Furthermore, due to expanding
+the search space to optimize assignment and routing simultaneously
+through the 3D pheromone matrix, 3D-PACO requires tremendous computational effort despite parallelism. Future research should explore
+approaches to optimize the energy efficiency without sacrificing the
+runtime and solution optimality.
+Lastly, a key limitation of VRPPL’s dataset is the lack of locker
+capacity information. Future work should address this limitation to
+ensure the practical application and investigate its application in multiobjective scenarios [6]. In terms of algorithm improvement, potential
+directions include exploring asynchronous parallelization (e.g., multicolony models) to reduce synchronization costs and extending the
+model-agnostic mapping mechanism to other optimization frameworks.
+CRediT authorship contribution statement
+
+Bold indicates the best performance among methods for each metric.
+
+Phu An Chau: Writing – original draft, Software. Loan T.T. Nguyen:
+Writing – original draft, Validation, Supervision, Methodology, Conceptualization. Witold Pedrycz: Writing – review & editing, Validation.
+Bay Vo: Writing – review & editing, Validation, Methodology.
+
+(693.2). SA performs relatively well, solving 10 instances, but suffers
+from prohibitively high runtimes (over 540 s on average) and much
+higher deviation from the best distances. Other methods, including
+ACO-TS, ALNS, and HHO, fail to scale: none discover more than a
+handful of BKS, and their average distances are substantially worse (all
+above 790). Runtime comparisons reinforce this trend: 3D-PACO remains efficient at scale, averaging 267 s, which is an order of magnitude
+faster than SA and significantly better than HHO (703 s). PACO without
+3D shows a slightly faster runtime than SA but still lags well behind in
+solution quality, reinforcing that the 3D matrix structure is not merely
+an incremental addition but a decisive factor in scaling solution quality
+and stability.
+Taken together as shown in Table 4, the results indicate that 3DPACO offers a balanced and scalable solution strategy. In small instances, it is slightly behind SA in terms of best-solution discovery but
+already competitive in average solution quality and markedly superior
+in runtime. As the problem size grows, 3D-PACO surpasses SA and
+all other solvers decisively, combining robustness in discovering BKS
+with consistently lower average distances and highly efficient runtimes.
+The comparison between 3D-PACO and PACO without the 3D matrix
+makes clear that the novel multidimensional pheromone representation
+is responsible for escaping suboptimal solutions while providing timely
+responses, confirming the design motivation of our proposed method.
+However, despite 3D-PACO and PACO outperforming other solvers
+in terms of wall-clock time, their architecture relies on mobilizing
+numerous threads (𝑝 = 64). This leads to the average CPU Time, which
+is estimated by 𝐴𝑉 𝐺(𝑇𝐶𝑃 𝑈 ) ≈ 𝐴𝑉 𝐺(𝑇 ) × 𝑝, displaying tremendous
+computational effort on different datasets. As a result, the benchmark in
+Table 4 suggests that the implementation of master–slave coarse-grain
+architecture achieves an advantage in reducing runtime by exchanging
+for significant costs for algorithmic intensity.
+
+Declaration of Generative AI and AI-assisted technologies in the
+writing process
+During the preparation of this work the authors used Gemini 2.5
+Flash in order to assist in improving coherence and grammar accuracy.
+After using this tool, the authors reviewed and edited the content as
+needed and take full responsibility for the content of the published
+article.
+Role of the funding source
+Please disclose any funding sources and their role, if any, in the
+writing of the manuscript or the decision to submit it for publication.
+Examples of involvement include: data collection, analysis, or interpretation; trial design; patient recruitment; or any aspect pertinent to the
+study. Please also comment whether you have been paid to write this
+article by a pharmaceutical company or other agency. The information
+provided here must match the role of the funding source statement in
+the manuscript. If you are the corresponding author, please state that
+authors were not precluded from accessing data in the study, and they
+accept responsibility to submit for publication.
+Declaration of competing interest
+The authors declare that they have no known competing financial interests or personal relationships that could have appeared to
+influence the work reported in this paper.
+
+5. Conclusion
+Data availability
+
+This work addressed the Vehicle Routing Problem with Parcel Lockers (VRPPL), a challenging variant of VRP due to multiple delivery
+modes and operational constraints. We introduced 3D-PACO, a parallel
+ACO model with a multidimensional pheromone matrix, designed to
+
+Data will be made available on request.
+
+14
+
+P.A. Chau et al.
+
+Swarm and Evolutionary Computation 104 (2026) 102371
+
+References
+
+[18] M. Dorigo, T. Stützle, Ant colony optimization: overview and recent advances,
+Handbook of Metaheuristics, vol. 272, 2018, pp. 311–351.
+[19] M. Dorigo, L.M. Gambardella, Ant colony system: a cooperative learning approach to the traveling salesman problem, IEEE Trans. Evol. Comput. 1 (1)
+(1997) 53–66.
+[20] T. Ren, T. Luo, B. Jia, B. Yang, L. Wang, L. Xing, Improved ant colony
+optimization for the vehicle routing problem with split pickup and split delivery,
+Swarm Evol. Comput. 77 (2023) 101228.
+[21] F. Wan, H. Guo, W. Pan, J. Hou, S. Chen, A mathematical method for solving
+multi-depot vehicle routing problem, Soft Comput. 27 (21) (2023) 15699–15717.
+[22] P. Stodola, J. Nohel, Adaptive ant colony optimization with node clustering for
+the multidepot vehicle routing problem, IEEE Trans. Evol. Comput. 27 (6) (2022)
+1866–1880.
+[23] S. Xue, An adaptive ant colony algorithm for crowdsourcing multi-depot vehicle
+routing problem with time windows, Sustain. Oper. Comput. 4 (2023) 62–75.
+[24] Y. Zhou, W. Li, X. Wang, Y. Qiu, W. Shen, Adaptive gradient descent enabled
+ant colony optimization for routing problems, Swarm Evol. Comput. 70 (2022)
+101046, http://dx.doi.org/10.1016/j.swevo.2022.101046.
+[25] M. Pedemonte, S. Nesmachnow, H. Cancela, A survey on parallel ant colony
+optimization, Appl. Soft Comput. 11 (8) (2011) 5181–5197, http://dx.doi.org/
+10.1016/j.asoc.2011.05.042.
+[26] Y. Zhou, F. He, N. Hou, Y. Qiu, Parallel ant colony optimization on multi-core
+SIMD CPUs, Future Gener. Comput. Syst. 79 (2018) 473–487, http://dx.doi.org/
+10.1016/j.future.2017.09.073.
+[27] J. Peake, M. Amos, N. Costen, G. Masala, H. Lloyd, PACO-VMP: Parallel ant
+colony optimization for virtual machine placement, Future Gener. Comput. Syst.
+129 (2022) 174–186, http://dx.doi.org/10.1016/j.future.2021.11.019.
+[28] J.M. Cecilia, A. Llanes, J.L. Abellán, J. Gómez-Luna, L.-W. Chang, W.-M.W. Hwu,
+High-throughput ant colony optimization on graphics processing units, J. Parallel
+Distrib. Comput. 113 (2018) 261–274, http://dx.doi.org/10.1016/j.jpdc.2017.12.
+002.
+[29] R. Skinderowicz, Implementing a GPU-based parallel MAX–MIN ant system,
+Future Gener. Comput. Syst. 106 (2020) 277–295, http://dx.doi.org/10.1016/
+j.future.2020.01.011.
+[30] K.F. Doerner, R.F. Hartl, G. Kiechle, M. Lucka, M. Reimann, Parallel ant systems
+for the capacitated vehicle routing problem, in: Evolutionary Computation in
+Combinatorial Optimization: 4th European Conference, EvoCOP 2004, Coimbra,
+Portugal, April 5-7, 2004. Proceedings 4, Springer, 2004, pp. 72–83.
+[31] P. Delisle, M. Gravel, M. Krajecki, C. Gagné, W.L. Price, Comparing parallelization of an ACO: message passing vs. shared memory, in: Hybrid Metaheuristics:
+Second International Workshop, HM 2005, Barcelona, Spain, August 29-30, 2005.
+Proceedings 2, Springer, 2005, pp. 1–11.
+[32] B. Yu, Z. Yang, B. Yao, A hybrid algorithm for vehicle routing problem with
+time windows, Expert Syst. Appl. 38 (1) (2011) 435–441.
+[33] M. Alweshah, M. Almiani, N. Almansour, S. Al Khalaileh, H. Aldabbas, W.
+Alomoush, A. Alshareef, Vehicle routing problems based on Harris Hawks
+optimization, J. Big Data 9 (1) (2022) 42.
+[34] S. Voigt, A review and ranking of operators in adaptive large neighborhood
+search for vehicle routing problems, European J. Oper. Res. 322 (2) (2025)
+357–375.
+[35] A.P. Châu, L. Nguyen, B. Vo, Benchmark results for VRP with parcel locker,
+2025, http://dx.doi.org/10.17632/8xpyf25c7y.1.
+[36] D.R. Jones, M. Schonlau, W.J. Welch, Efficient global optimization of expensive
+black-box functions, J. Global Optim. 13 (1998) 455–492.
+
+[1] T.T. Huong, B.N. Thiet, Smart locker-a sustainable urban last-mile delivery
+solution: Benefits and challenges in implementing in Vietnam, in: 12th NEUKKU International Conference Socio-Economic and Environmental Issues in
+Development, 2020.
+[2] M. Dorigo, V. Maniezzo, A. Colorni, Ant system: optimization by a colony of
+cooperating agents, IEEE Trans. Syst. Man Cybern. B 26 (1) (1996) 29–41.
+[3] E. Alhenawi, R.A. Khurma, A.A. Sharieh, O. Al-Adwan, A. Al Shorman, F.
+Shannaq, Parallel ant colony optimization algorithm for finding the shortest path
+for mountain climbing, IEEE Access 11 (2023) 6185–6196.
+[4] B.A. de Melo Menezes, H. Kuchen, F. Buarque de Lima Neto, Parallelization of
+swarm intelligence algorithms: literature review, Int. J. Parallel Program. 50 (5)
+(2022) 486–514.
+[5] F.Y. Vincent, H. Susanto, P. Jodiawan, T.-W. Ho, S.-W. Lin, Y.-T. Huang, A
+simulated annealing algorithm for the vehicle routing problem with parcel
+lockers, IEEE Access 10 (2022) 20764–20782.
+[6] W. Chen, Y. Liu, J. Liu, The multi-objective vehicle routing problems with
+parcel lockers for simultaneous pick-up and delivery, in: 2024 IEEE Congress
+on Evolutionary Computation, CEC, IEEE, 2024, pp. 1–8.
+[7] C. Tilk, K. Olkis, S. Irnich, The last-mile vehicle routing problem with delivery
+options, OR Spectrum 43 (4) (2021) 877–904.
+[8] J. Grabenschweiger, K.F. Doerner, R.F. Hartl, M.W. Savelsbergh, The vehicle
+routing problem with heterogeneous locker boxes, Cent. Eur. J. Oper. Res. 29
+(2021) 113–142.
+[9] N.N.T. Nguyen, N. Van Hop, Hierarchical allocation-routing heuristic algorithm
+for crowd-shipping problem with time windows, transshipment nodes, and
+delivery options, Expert Syst. Appl. 268 (2025) 126325.
+[10] T.I. Faiz, C. Vogiatzis, M. Noor-E-Alam, A column generation algorithm for
+vehicle scheduling and routing problems, Comput. Ind. Eng. 130 (2019)
+222–236.
+[11] X. Zhang, L. Chen, M. Gendreau, A. Langevin, A branch-and-cut algorithm for
+the vehicle routing problem with two-dimensional loading constraints, European
+J. Oper. Res. 302 (1) (2022) 259–269.
+[12] G. Clarke, J.W. Wright, Scheduling of vehicles from a central depot to a number
+of delivery points, Oper. Res. 12 (4) (1964) 568–581.
+[13] G. Laporte, S. Ropke, T. Vidal, Chapter 4: Heuristics for the vehicle routing
+problem, in: Vehicle Routing: Problems, Methods, and Applications, Second
+Edition, SIAM, 2014, pp. 87–116.
+[14] T. Stamadianos, A. Taxidou, M. Marinaki, Y. Marinakis, Swarm intelligence and
+nature inspired algorithms for solving vehicle routing problems: a survey, Oper.
+Res. 24 (3) (2024) 47.
+[15] Y. Marinakis, M. Marinaki, A. Migdalas, A multi-adaptive particle swarm optimization for the vehicle routing problem with time windows, Inform. Sci. 481
+(2019) 311–329, http://dx.doi.org/10.1016/j.ins.2018.12.086.
+[16] D. Trachanatzi, M. Rigakis, M. Marinaki, Y. Marinakis, N. Matsatsinis, Distance
+related: a procedure for applying directly artificial bee colony algorithm in
+routing problems, Soft Comput. 24 (2020) 9071–9089.
+[17] G.-H. Wu, C.-Y. Cheng, P. Pourhejazy, B.-L. Fang, Variable neighborhood-based
+cuckoo search for production routing with time window and setup times, Appl.
+Soft Comput. 125 (2022) 109191, http://dx.doi.org/10.1016/j.asoc.2022.109191.
+
+15
+
+
