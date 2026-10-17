@@ -42,6 +42,7 @@ struct InstanceHost {
     std::vector<int> cust_locker;     // [num_customers], Locker node ID (1+N..N+K)
     std::vector<int> node_early;      // [total_nodes]
     std::vector<int> node_late;       // [total_nodes]
+    std::vector<int> node_service;    // [total_nodes]
     std::vector<float> dist_matrix;   // [total_nodes * total_nodes]
 };
 
@@ -62,11 +63,12 @@ bool parse_vrppl_instance(const std::string& filepath, InstanceHost& inst) {
     std::vector<double> xs(inst.total_nodes), ys(inst.total_nodes);
     inst.node_early.resize(inst.total_nodes);
     inst.node_late.resize(inst.total_nodes);
+    inst.node_service.resize(inst.total_nodes);
     inst.cust_type.resize(inst.num_customers);
 
     for (int i = 0; i < inst.total_nodes; ++i) {
-        int service, type;
-        infile >> xs[i] >> ys[i] >> inst.node_early[i] >> inst.node_late[i] >> service >> type;
+        int type;
+        infile >> xs[i] >> ys[i] >> inst.node_early[i] >> inst.node_late[i] >> inst.node_service[i] >> type;
         if (i >= 1 && i <= inst.num_customers) {
             inst.cust_type[i - 1] = type;
         }
@@ -112,6 +114,7 @@ __device__ __forceinline__ float evaluate_solution_device(
     const int* __restrict__ cust_locker,
     const int* __restrict__ node_early,
     const int* __restrict__ node_late,
+    const int* __restrict__ node_service,
     const float* __restrict__ dist,
     int* out_vehicles = nullptr
 ) {
@@ -158,7 +161,7 @@ __device__ __forceinline__ float evaluate_solution_device(
         }
 
         total_distance += dist[curr_node * total_nodes + delivery_node];
-        time = (arr_time > early) ? arr_time : early;
+        time = ((arr_time > early) ? arr_time : early) + node_service[delivery_node];
         load += demand;
         curr_node = delivery_node;
         if (is_locker) {
@@ -230,7 +233,7 @@ void evaluate_solution_host(
         }
 
         total_distance += inst.dist_matrix[curr_node * total_nodes + delivery_node];
-        time = std::max(arr_time, early);
+        time = std::max(arr_time, early) + inst.node_service[delivery_node];
         load += demand;
         curr_node = delivery_node;
         if (is_locker) {
@@ -270,6 +273,7 @@ __global__ void warp_paco_construct_and_ls_kernel(
     const int* __restrict__ cust_locker,
     const int* __restrict__ node_early,
     const int* __restrict__ node_late,
+    const int* __restrict__ node_service,
     const float* __restrict__ dist,
     const float* __restrict__ tau,
     float alpha,
@@ -527,7 +531,7 @@ __global__ void warp_paco_construct_and_ls_kernel(
                 visited_lockers_mask = 0U;
                 arr_time = static_cast<int>(dist[0 * total_nodes + deliv_node]);
             }
-            curr_time = (arr_time > early) ? arr_time : early;
+            curr_time = ((arr_time > early) ? arr_time : early) + node_service[deliv_node];
             curr_load += demand;
             curr_phys_node = deliv_node;
             if (is_locker) {
@@ -540,7 +544,7 @@ __global__ void warp_paco_construct_and_ls_kernel(
 
     float current_cost = evaluate_solution_device(
         n, total_nodes, cap, my_perm, my_mode,
-        cust_demand, cust_locker, node_early, node_late, dist
+        cust_demand, cust_locker, node_early, node_late, node_service, dist
     );
 
     // ========================================================================
@@ -729,7 +733,7 @@ __global__ void warp_paco_construct_and_ls_kernel(
 
         float cand_cost = evaluate_solution_device(
             n, total_nodes, cap, local_perm, local_mode,
-            cust_demand, cust_locker, node_early, node_late, dist
+            cust_demand, cust_locker, node_early, node_late, node_service, dist
         );
 
         float best_lane_cost = cand_cost;
@@ -898,7 +902,7 @@ SolveStats run_gpu_3d_paco_single(
         }
     }
 
-    int *d_cust_type, *d_cust_demand, *d_cust_locker, *d_node_early, *d_node_late, *d_mask;
+    int *d_cust_type, *d_cust_demand, *d_cust_locker, *d_node_early, *d_node_late, *d_node_service, *d_mask;
     float *d_dist, *d_tau, *d_all_costs;
     int *d_all_perms, *d_all_modes, *d_elite_indices, *d_elite_perms, *d_elite_modes;
     curandState* d_rng_states;
@@ -910,6 +914,7 @@ SolveStats run_gpu_3d_paco_single(
     cudaMalloc(&d_cust_locker, n * sizeof(int));
     cudaMalloc(&d_node_early, total_nodes * sizeof(int));
     cudaMalloc(&d_node_late, total_nodes * sizeof(int));
+    cudaMalloc(&d_node_service, total_nodes * sizeof(int));
     cudaMalloc(&d_dist, total_nodes * total_nodes * sizeof(float));
     cudaMalloc(&d_mask, tau_elements * sizeof(int));
     cudaMalloc(&d_tau, tau_elements * sizeof(float));
@@ -927,6 +932,7 @@ SolveStats run_gpu_3d_paco_single(
     cudaMemcpy(d_cust_locker, inst.cust_locker.data(), n * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_node_early, inst.node_early.data(), total_nodes * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_node_late, inst.node_late.data(), total_nodes * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_node_service, inst.node_service.data(), total_nodes * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_dist, inst.dist_matrix.data(), total_nodes * total_nodes * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_mask, h_mask.data(), tau_elements * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_tau, h_tau.data(), tau_elements * sizeof(float), cudaMemcpyHostToDevice);
@@ -956,7 +962,7 @@ SolveStats run_gpu_3d_paco_single(
         warp_paco_construct_and_ls_kernel<<<blocks, threads_per_block>>>(
             iter, n, total_nodes, inst.vehicle_capacity, top_t,
             d_cust_type, d_cust_demand, d_cust_locker,
-            d_node_early, d_node_late, d_dist, d_tau,
+            d_node_early, d_node_late, d_node_service, d_dist, d_tau,
             alpha, beta, ls_steps, num_ants, d_rng_states,
             d_elite_perms, d_elite_modes,
             d_all_perms, d_all_modes, d_all_costs,
@@ -1015,6 +1021,7 @@ SolveStats run_gpu_3d_paco_single(
     cudaFree(d_cust_locker);
     cudaFree(d_node_early);
     cudaFree(d_node_late);
+    cudaFree(d_node_service);
     cudaFree(d_dist);
     cudaFree(d_mask);
     cudaFree(d_tau);
