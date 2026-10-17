@@ -23,6 +23,7 @@
 #include <numeric>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
+#include "../ig/ig_bridge.h"
 
 namespace fs = std::filesystem;
 
@@ -30,8 +31,14 @@ namespace fs = std::filesystem;
 #define MAX_CUST 128
 #define MAX_NODES 160
 
+// Iterated Greedy (Corrêa et al.) used as the local search instead of the in-kernel LS
+static int g_use_ig = 0;
+static int g_ig_k = 4;
+static std::string g_data_dir;   // optional override of the dataset directory   // number of best ants per iteration refined by IG
+
 struct InstanceHost {
     std::string name;
+    std::string path;
     int num_customers;
     int num_lockers;
     int total_nodes;
@@ -50,6 +57,7 @@ bool parse_vrppl_instance(const std::string& filepath, InstanceHost& inst) {
     std::ifstream infile(filepath);
     if (!infile.is_open()) return false;
     inst.name = fs::path(filepath).filename().string();
+    inst.path = filepath;
 
     infile >> inst.num_customers >> inst.num_lockers;
     infile >> inst.num_vehicles >> inst.vehicle_capacity;
@@ -95,7 +103,8 @@ bool parse_vrppl_instance(const std::string& filepath, InstanceHost& inst) {
         for (int j = 0; j < inst.total_nodes; ++j) {
             double dx = xs[i] - xs[j];
             double dy = ys[i] - ys[j];
-            inst.dist_matrix[i * inst.total_nodes + j] = static_cast<float>(std::sqrt(dx * dx + dy * dy));
+            // The IG paper truncates every arc to one decimal; use the same metric so results are comparable
+            inst.dist_matrix[i * inst.total_nodes + j] = static_cast<float>(std::floor(std::sqrt(dx * dx + dy * dy) * 10.0) / 10.0);
         }
     }
     return true;
@@ -121,7 +130,7 @@ __device__ __forceinline__ float evaluate_solution_device(
     float total_distance = 0.0f;
     int vehicle = 0;
     int load = 0;
-    int time = 0;
+    float time = 0.0f;
     int curr_node = 0;
     int last_node = 0;
     unsigned int visited_lockers_mask = 0U;
@@ -132,7 +141,7 @@ __device__ __forceinline__ float evaluate_solution_device(
         int delivery_node = (d == 0) ? cust_id : cust_locker[cust_id - 1];
         int demand = cust_demand[cust_id - 1];
 
-        int arr_time = time + static_cast<int>(dist[curr_node * total_nodes + delivery_node]);
+        float arr_time = time + dist[curr_node * total_nodes + delivery_node];
         int early = node_early[delivery_node];
         int late = node_late[delivery_node];
 
@@ -145,7 +154,7 @@ __device__ __forceinline__ float evaluate_solution_device(
             }
         }
 
-        bool violates = (load + demand > cap) || (arr_time > late) || duplicate_locker;
+        bool violates = (load + demand > cap) || (arr_time > late + 1e-3f) || duplicate_locker;
         if (violates) {
             if (curr_node != 0) {
                 total_distance += dist[curr_node * total_nodes + 0];
@@ -161,7 +170,8 @@ __device__ __forceinline__ float evaluate_solution_device(
         }
 
         total_distance += dist[curr_node * total_nodes + delivery_node];
-        time = ((arr_time > early) ? arr_time : early) + node_service[delivery_node];
+        // Service time is paid once per stop (consecutive customers at the same locker share one stop)
+        time = ((arr_time > early) ? arr_time : early) + ((is_locker && delivery_node == curr_node) ? 0 : node_service[delivery_node]);
         load += demand;
         curr_node = delivery_node;
         if (is_locker) {
@@ -193,7 +203,7 @@ void evaluate_solution_host(
     double total_distance = 0.0;
     int vehicle = 0;
     int load = 0;
-    int time = 0;
+    float time = 0.0f;
     int curr_node = 0;
     int last_node = 0;
     unsigned int visited_lockers_mask = 0U;
@@ -204,7 +214,7 @@ void evaluate_solution_host(
         int delivery_node = (d == 0) ? cust_id : inst.cust_locker[cust_id - 1];
         int demand = inst.cust_demand[cust_id - 1];
 
-        int arr_time = time + static_cast<int>(inst.dist_matrix[curr_node * total_nodes + delivery_node]);
+        float arr_time = time + inst.dist_matrix[curr_node * total_nodes + delivery_node];
         int early = inst.node_early[delivery_node];
         int late = inst.node_late[delivery_node];
 
@@ -217,7 +227,7 @@ void evaluate_solution_host(
             }
         }
 
-        bool violates = (load + demand > cap) || (arr_time > late) || duplicate_locker;
+        bool violates = (load + demand > cap) || (arr_time > late + 1e-3f) || duplicate_locker;
         if (violates) {
             if (curr_node != 0) {
                 total_distance += inst.dist_matrix[curr_node * total_nodes + 0];
@@ -233,7 +243,7 @@ void evaluate_solution_host(
         }
 
         total_distance += inst.dist_matrix[curr_node * total_nodes + delivery_node];
-        time = std::max(arr_time, early) + inst.node_service[delivery_node];
+        time = std::max(arr_time, static_cast<float>(early)) + ((is_locker && delivery_node == curr_node) ? 0 : inst.node_service[delivery_node]);
         load += demand;
         curr_node = delivery_node;
         if (is_locker) {
@@ -414,7 +424,7 @@ __global__ void warp_paco_construct_and_ls_kernel(
         int prev_cust = 0;
         int curr_phys_node = 0;
         int curr_load = 0;
-        int curr_time = 0;
+        float curr_time = 0.0f;
         unsigned int visited_lockers_mask = 0U;
 
         for (int step = 0; step < n; ++step) {
@@ -440,7 +450,7 @@ __global__ void warp_paco_construct_and_ls_kernel(
 
                             int deliv_node = (d == 0) ? j : cust_locker[j - 1];
                             float step_dist = dist[curr_phys_node * total_nodes + deliv_node];
-                            int arr_time = curr_time + static_cast<int>(step_dist);
+                            float arr_time = curr_time + step_dist;
                             int early = node_early[deliv_node];
                             int late  = node_late[deliv_node];
 
@@ -454,20 +464,20 @@ __global__ void warp_paco_construct_and_ls_kernel(
                             }
 
                             float eta;
-                            if (curr_load + demand > cap || arr_time > late || dup_locker) {
+                            if (curr_load + demand > cap || arr_time > late + 1e-3f || dup_locker) {
                                 float d0 = dist[0 * total_nodes + deliv_node];
                                 int e0 = node_early[deliv_node];
                                 int l0 = node_late[deliv_node];
-                                float wait0 = (e0 > static_cast<int>(d0)) ? static_cast<float>(e0 - static_cast<int>(d0)) : 0.0f;
+                                float wait0 = (e0 > d0) ? (static_cast<float>(e0) - d0) : 0.0f;
                                 float new_veh_metric = d0 + 0.5f * wait0 + 0.12f * static_cast<float>(l0);
                                 eta = 1e-4f / (new_veh_metric + 1.0f);
                             } else {
                                 if (is_locker && deliv_node == curr_phys_node) {
                                     eta = 50.0f;
                                 } else {
-                                    int wait_time = (early > arr_time) ? (early - arr_time) : 0;
-                                    int urgency = late - ((arr_time > early) ? arr_time : early);
-                                    float metric = step_dist + 0.7f * static_cast<float>(wait_time) + 0.12f * static_cast<float>(urgency);
+                                    float wait_time = (early > arr_time) ? (early - arr_time) : 0.0f;
+                                    float urgency = late - ((arr_time > early) ? arr_time : early);
+                                    float metric = step_dist + 0.7f * wait_time + 0.12f * urgency;
                                     if (is_locker) {
                                         metric *= 0.65f;
                                     }
@@ -512,7 +522,7 @@ __global__ void warp_paco_construct_and_ls_kernel(
 
             int deliv_node = (best_d == 0) ? best_j : cust_locker[best_j - 1];
             int demand = cust_demand[best_j - 1];
-            int arr_time = curr_time + static_cast<int>(dist[curr_phys_node * total_nodes + deliv_node]);
+            float arr_time = curr_time + dist[curr_phys_node * total_nodes + deliv_node];
             int early = node_early[deliv_node];
             int late  = node_late[deliv_node];
             bool is_locker = (deliv_node > n);
@@ -524,14 +534,14 @@ __global__ void warp_paco_construct_and_ls_kernel(
                 }
             }
 
-            if (curr_load + demand > cap || arr_time > late || dup_locker) {
+            if (curr_load + demand > cap || arr_time > late + 1e-3f || dup_locker) {
                 curr_phys_node = 0;
                 curr_load = 0;
                 curr_time = 0;
                 visited_lockers_mask = 0U;
-                arr_time = static_cast<int>(dist[0 * total_nodes + deliv_node]);
+                arr_time = dist[0 * total_nodes + deliv_node];
             }
-            curr_time = ((arr_time > early) ? arr_time : early) + node_service[deliv_node];
+            curr_time = ((arr_time > early) ? arr_time : early) + ((is_locker && deliv_node == curr_phys_node) ? 0 : node_service[deliv_node]);
             curr_load += demand;
             curr_phys_node = deliv_node;
             if (is_locker) {
@@ -958,12 +968,23 @@ SolveStats run_gpu_3d_paco_single(
     int iter = 0;
     float rho = rho_ini;
 
+    IGHandle* ig = nullptr;
+    std::vector<int> h_perms, h_modes, ig_perm(n), ig_mode(n);
+    std::string ig_routes, best_routes;
+    const bool dump_routes = std::getenv("PACO_DUMP") != nullptr;
+    if (g_use_ig) {
+        ig = ig_create(inst.path.c_str(), 0.2, 1.0);
+        if (!ig) { std::cerr << "IG: cannot load " << inst.path << std::endl; std::exit(1); }
+        h_perms.resize(num_ants * n);
+        h_modes.resize(num_ants * n);
+    }
+
     while (non_improved < max_non_improved) {
         warp_paco_construct_and_ls_kernel<<<blocks, threads_per_block>>>(
             iter, n, total_nodes, inst.vehicle_capacity, top_t,
             d_cust_type, d_cust_demand, d_cust_locker,
             d_node_early, d_node_late, d_node_service, d_dist, d_tau,
-            alpha, beta, ls_steps, num_ants, d_rng_states,
+            alpha, beta, g_use_ig ? 0 : ls_steps, num_ants, d_rng_states,
             d_elite_perms, d_elite_modes,
             d_all_perms, d_all_modes, d_all_costs,
             enable_lever1, enable_lever2, enable_lever3
@@ -975,10 +996,52 @@ SolveStats run_gpu_3d_paco_single(
         std::partial_sort(indices.begin(), indices.begin() + top_t, indices.end(),
                           [&](int a, int b) { return h_costs[a] < h_costs[b]; });
 
+        bool ig_improved = false;
+        if (ig) {
+            // Refine the best ants with Iterated Greedy and feed them back into the pheromone update
+            cudaMemcpy(h_perms.data(), d_all_perms, num_ants * n * sizeof(int), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_modes.data(), d_all_modes, num_ants * n * sizeof(int), cudaMemcpyDeviceToHost);
+            int k = std::min(g_ig_k, top_t);
+            for (int q = 0; q < k; ++q) {
+                int a = indices[q];
+                double ig_cost = 0.0;
+                int ig_veh = 0;
+                if (!ig_improve(ig, &h_perms[a * n], &h_modes[a * n], n, inst.vehicle_capacity,
+                                static_cast<unsigned>(seed + iter * 131 + q), ig_perm.data(), ig_mode.data(),
+                                &ig_cost, &ig_veh, dump_routes ? &ig_routes : nullptr)) continue;
+                std::copy(ig_perm.begin(), ig_perm.end(), h_perms.begin() + a * n);
+                std::copy(ig_mode.begin(), ig_mode.end(), h_modes.begin() + a * n);
+                float ev_dist = 0.0f; int ev_veh = 0;
+                evaluate_solution_host(inst, ig_perm, ig_mode, ev_dist, ev_veh);
+                h_costs[a] = std::min(static_cast<float>(ig_cost), ev_dist);
+                cudaMemcpy(&d_all_perms[a * n], &h_perms[a * n], n * sizeof(int), cudaMemcpyHostToDevice);
+                cudaMemcpy(&d_all_modes[a * n], &h_modes[a * n], n * sizeof(int), cudaMemcpyHostToDevice);
+                if (static_cast<float>(ig_cost) + 1e-4f < global_best_cost) {
+                    global_best_cost = static_cast<float>(ig_cost);
+                    global_best_perm = ig_perm;
+                    global_best_mode = ig_mode;
+                    best_routes = ig_routes;
+                    ig_improved = true;
+                }
+            }
+            cudaMemcpy(d_all_costs, h_costs.data(), num_ants * sizeof(float), cudaMemcpyHostToDevice);
+            std::partial_sort(indices.begin(), indices.begin() + top_t, indices.end(),
+                              [&](int a, int b) { return h_costs[a] < h_costs[b]; });
+        }
+
         int iter_best_ant = indices[0];
         float iter_best_cost = h_costs[iter_best_ant];
 
-        if (iter_best_cost + 1e-4f < global_best_cost) {
+        if (ig) {
+            if (ig_improved) {
+                non_improved = 0;
+            } else {
+                non_improved++;
+                float x = 10.0f * (static_cast<float>(non_improved) / max_non_improved - 0.5f);
+                float sig = 1.0f / (1.0f + std::exp(-x));
+                rho = rho_ini + (0.7f - rho_ini) * sig;
+            }
+        } else if (iter_best_cost + 1e-4f < global_best_cost) {
             global_best_cost = iter_best_cost;
             global_best_ant = iter_best_ant;
             cudaMemcpy(global_best_perm.data(), &d_all_perms[global_best_ant * n], n * sizeof(int), cudaMemcpyDeviceToHost);
@@ -1015,6 +1078,12 @@ SolveStats run_gpu_3d_paco_single(
     float verified_dist = 0.0f;
     int verified_veh = 0;
     evaluate_solution_host(inst, global_best_perm, global_best_mode, verified_dist, verified_veh);
+    if (ig) {
+        // IG's own cost is authoritative (the GPU evaluator may re-split routes differently)
+        verified_dist = global_best_cost;
+        if (dump_routes) std::cerr << "SOL " << inst.name << " " << global_best_cost << " : " << best_routes << std::endl;
+        ig_destroy(ig);
+    }
 
     cudaFree(d_cust_type);
     cudaFree(d_cust_demand);
@@ -1139,6 +1208,9 @@ int main(int argc, char** argv) {
         else if (arg == "--scale" && i + 1 < argc) scale = argv[++i];
         else if (arg == "--out" && i + 1 < argc) out_csv = argv[++i];
         else if (arg == "--runs" && i + 1 < argc) num_runs = std::stoi(argv[++i]);
+        else if (arg == "--dir" && i + 1 < argc) g_data_dir = argv[++i];
+        else if (arg == "--ig") g_use_ig = 1;
+        else if (arg == "--ig-k" && i + 1 < argc) g_ig_k = std::stoi(argv[++i]);
         else if (arg == "25" || arg == "50" || arg == "100" || arg == "all" || arg == "single") scale = arg;
     }
 
@@ -1168,7 +1240,7 @@ int main(int argc, char** argv) {
     }
     if (scale == "50" || scale == "medium") {
         if (out_csv.empty()) out_csv = "src/output/solutions/medium_gpu_paco.csv";
-        run_dataset_benchmark("src/data/50", out_csv, num_runs, 384, 14, 48, 45, enable_lever1, enable_lever2, enable_lever3);
+        run_dataset_benchmark(g_data_dir.empty() ? "src/data/50" : g_data_dir, out_csv, num_runs, 384, 14, 48, 45, enable_lever1, enable_lever2, enable_lever3);
         return 0;
     }
     if (scale == "100" || scale == "large") {
