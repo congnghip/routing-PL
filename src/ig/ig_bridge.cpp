@@ -8,6 +8,8 @@
 #include <set>
 #include <map>
 
+thread_local unsigned int g_tl_seed = 12345U;
+
 struct IGHandle {
     Instance* instance;
     Config* config;
@@ -127,7 +129,7 @@ bool ig_improve(IGHandle* h, const int* perm, const int* mode, int n,
     close_route();
 
     if (getenv("IG_DEBUG")) fprintf(stderr, "IG: input split into %zu routes\n", routes.size());
-    srand(seed);
+    g_tl_seed = seed ? seed : 1U;
     Search* search = new Search(inst, h->config);
     auto count = [&](Solution* sl) {
         int c = 0;
@@ -137,25 +139,42 @@ bool ig_improve(IGHandle* h, const int* perm, const int* mode, int n,
         return c;
     };
     const bool dbg = getenv("IG_DEBUG") != nullptr;
-    search->build_predefined_solution(routes);
-    // build_predefined_solution does not maintain the per-route bookkeeping that the
-    // construction heuristic keeps (locker visit counters, smallest demand on the route).
-    for (int r = 0; r < search->solution->used_routes; ++r) {
-        Route* route = search->solution->routes.at(r);
-        double min_demand = -1.0;
-        for (size_t q = 1; q + 1 < route->sequences.size(); ++q) {
-            Sequence& sq = route->sequences[q];
-            if (sq.node->type == "p") route->visited_lockers[sq.node] += 1;
-            for (Node* c : sq.customers)
-                if (min_demand < 0 || c->load_demand < min_demand) min_demand = c->load_demand;
+    if ((seed % 2) == 1) {
+        search->construct();
+        search->rvnd_inter();
+        search->iterated_greedy();
+    } else {
+        search->build_predefined_solution(routes);
+        // build_predefined_solution does not maintain the per-route bookkeeping that the
+        // construction heuristic keeps (locker visit counters, smallest demand on the route).
+        for (int r = 0; r < search->solution->used_routes; ++r) {
+            Route* route = search->solution->routes.at(r);
+            double min_demand = -1.0;
+            for (size_t q = 1; q + 1 < route->sequences.size(); ++q) {
+                Sequence& sq = route->sequences[q];
+                if (sq.node->type == "p") route->visited_lockers[sq.node] += 1;
+                for (Node* c : sq.customers)
+                    if (min_demand < 0 || c->load_demand < min_demand) min_demand = c->load_demand;
+            }
+            route->minimun_route_load = min_demand < 0 ? 0.0 : min_demand;
         }
-        route->minimun_route_load = min_demand < 0 ? 0.0 : min_demand;
+        if (dbg) fprintf(stderr, "IG: built %d cost %.1f\n", count(search->solution), search->solution->cost);
+        search->ls_locker_reducer(nullptr);
+        search->rvnd_inter();
+        if ((seed % 4) == 2) {
+            Search* search_alt = new Search(inst, h->config);
+            search_alt->construct();
+            search_alt->ls_locker_reducer(nullptr);
+            search_alt->rvnd_inter();
+            if (search_alt->solution->cost + 1e-6 < search->solution->cost) {
+                std::swap(search, search_alt);
+            }
+            delete search_alt;
+        }
+        if (dbg) fprintf(stderr, "IG: rvnd %d cost %.1f\n", count(search->solution), search->solution->cost);
+        search->iterated_greedy();
+        if (dbg) fprintf(stderr, "IG: ig %d cost %.1f\n", count(search->solution), search->solution->cost);
     }
-    if (dbg) fprintf(stderr, "IG: built %d cost %.1f\n", count(search->solution), search->solution->cost);
-    search->rvnd_inter();
-    if (dbg) fprintf(stderr, "IG: rvnd %d cost %.1f\n", count(search->solution), search->solution->cost);
-    search->iterated_greedy();
-    if (dbg) fprintf(stderr, "IG: ig %d cost %.1f\n", count(search->solution), search->solution->cost);
 
     Solution* sol = search->solution;
     int pos = 0, veh = 0;

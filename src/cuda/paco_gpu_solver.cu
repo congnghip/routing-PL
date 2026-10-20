@@ -23,6 +23,7 @@
 #include <numeric>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
+#include <omp.h>
 #include "../ig/ig_bridge.h"
 
 namespace fs = std::filesystem;
@@ -33,7 +34,7 @@ namespace fs = std::filesystem;
 
 // Iterated Greedy (Corrêa et al.) used as the local search instead of the in-kernel LS
 static int g_use_ig = 0;
-static int g_ig_k = 4;
+static int g_ig_k = 16;
 static std::string g_data_dir;   // optional override of the dataset directory   // number of best ants per iteration refined by IG
 
 struct InstanceHost {
@@ -1002,27 +1003,47 @@ SolveStats run_gpu_3d_paco_single(
             cudaMemcpy(h_perms.data(), d_all_perms, num_ants * n * sizeof(int), cudaMemcpyDeviceToHost);
             cudaMemcpy(h_modes.data(), d_all_modes, num_ants * n * sizeof(int), cudaMemcpyDeviceToHost);
             int k = std::min(g_ig_k, top_t);
-            for (int q = 0; q < k; ++q) {
-                int a = indices[q];
+            std::vector<int> cand_ants;
+            if (iter == 0) {
+                for (int q = 0; q < k; ++q) cand_ants.push_back(indices[q]);
+            } else {
+                cand_ants.push_back(indices[0]);
+                std::vector<int> fresh_idx;
+                for (int a = top_t / 2; a < num_ants; ++a) fresh_idx.push_back(a);
+                std::partial_sort(fresh_idx.begin(), fresh_idx.begin() + std::min((int)fresh_idx.size(), k - 1), fresh_idx.end(),
+                                  [&](int a, int b) { return h_costs[a] < h_costs[b]; });
+                for (int q = 0; q < k - 1 && q < (int)fresh_idx.size(); ++q) cand_ants.push_back(fresh_idx[q]);
+            }
+            #pragma omp parallel for schedule(dynamic, 1)
+            for (int q = 0; q < (int)cand_ants.size(); ++q) {
+                int a = cand_ants[q];
                 double ig_cost = 0.0;
                 int ig_veh = 0;
+                std::vector<int> loc_perm(n), loc_mode(n);
+                std::string loc_routes;
                 if (!ig_improve(ig, &h_perms[a * n], &h_modes[a * n], n, inst.vehicle_capacity,
-                                static_cast<unsigned>(seed + iter * 131 + q), ig_perm.data(), ig_mode.data(),
-                                &ig_cost, &ig_veh, dump_routes ? &ig_routes : nullptr)) continue;
-                std::copy(ig_perm.begin(), ig_perm.end(), h_perms.begin() + a * n);
-                std::copy(ig_mode.begin(), ig_mode.end(), h_modes.begin() + a * n);
+                                static_cast<unsigned>(seed * 31 + iter * 131 + q), loc_perm.data(), loc_mode.data(),
+                                &ig_cost, &ig_veh, dump_routes ? &loc_routes : nullptr)) continue;
+                std::copy(loc_perm.begin(), loc_perm.end(), h_perms.begin() + a * n);
+                std::copy(loc_mode.begin(), loc_mode.end(), h_modes.begin() + a * n);
                 float ev_dist = 0.0f; int ev_veh = 0;
-                evaluate_solution_host(inst, ig_perm, ig_mode, ev_dist, ev_veh);
+                evaluate_solution_host(inst, loc_perm, loc_mode, ev_dist, ev_veh);
                 h_costs[a] = std::min(static_cast<float>(ig_cost), ev_dist);
+                #pragma omp critical
+                {
+                    if (static_cast<float>(ig_cost) + 1e-4f < global_best_cost) {
+                        global_best_cost = static_cast<float>(ig_cost);
+                        global_best_perm = loc_perm;
+                        global_best_mode = loc_mode;
+                        best_routes = loc_routes;
+                        ig_improved = true;
+                    }
+                }
+            }
+            for (int q = 0; q < (int)cand_ants.size(); ++q) {
+                int a = cand_ants[q];
                 cudaMemcpy(&d_all_perms[a * n], &h_perms[a * n], n * sizeof(int), cudaMemcpyHostToDevice);
                 cudaMemcpy(&d_all_modes[a * n], &h_modes[a * n], n * sizeof(int), cudaMemcpyHostToDevice);
-                if (static_cast<float>(ig_cost) + 1e-4f < global_best_cost) {
-                    global_best_cost = static_cast<float>(ig_cost);
-                    global_best_perm = ig_perm;
-                    global_best_mode = ig_mode;
-                    best_routes = ig_routes;
-                    ig_improved = true;
-                }
             }
             cudaMemcpy(d_all_costs, h_costs.data(), num_ants * sizeof(float), cudaMemcpyHostToDevice);
             std::partial_sort(indices.begin(), indices.begin() + top_t, indices.end(),
@@ -1235,17 +1256,17 @@ int main(int argc, char** argv) {
 
     if (scale == "25" || scale == "small") {
         if (out_csv.empty()) out_csv = "src/output/solutions/small_gpu_paco.csv";
-        run_dataset_benchmark("src/data/25", out_csv, num_runs, 256, 12, 32, 35, enable_lever1, enable_lever2, enable_lever3);
+        run_dataset_benchmark(g_data_dir.empty() ? "src/data/25" : g_data_dir, out_csv, num_runs, 256, g_use_ig ? 4 : 12, 32, 35, enable_lever1, enable_lever2, enable_lever3);
         return 0;
     }
     if (scale == "50" || scale == "medium") {
         if (out_csv.empty()) out_csv = "src/output/solutions/medium_gpu_paco.csv";
-        run_dataset_benchmark(g_data_dir.empty() ? "src/data/50" : g_data_dir, out_csv, num_runs, 384, 14, 48, 45, enable_lever1, enable_lever2, enable_lever3);
+        run_dataset_benchmark(g_data_dir.empty() ? "src/data/50" : g_data_dir, out_csv, num_runs, 384, g_use_ig ? 4 : 14, 48, 45, enable_lever1, enable_lever2, enable_lever3);
         return 0;
     }
     if (scale == "100" || scale == "large") {
         if (out_csv.empty()) out_csv = "src/output/solutions/large_gpu_paco.csv";
-        run_dataset_benchmark("src/data/100", out_csv, num_runs, 512, 15, 64, 60, enable_lever1, enable_lever2, enable_lever3);
+        run_dataset_benchmark(g_data_dir.empty() ? "src/data/100" : g_data_dir, out_csv, num_runs, 512, g_use_ig ? 4 : 15, 64, 60, enable_lever1, enable_lever2, enable_lever3);
         return 0;
     }
 

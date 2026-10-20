@@ -63,7 +63,7 @@ void Search::insertion_heuristic(bool is_ig) {
 
         int rand_index = 0;
         if(candidates>0) {
-            rand_index = rand()%candidates;
+            rand_index = rand_r(&g_tl_seed)%candidates;
         }
 
         tuple<int,int,Sequence,double> candidate = cand_list.at(rand_index);
@@ -83,7 +83,9 @@ void Search::rvnd_intra() {
 
     vector<int> neighb = {0,1,2,3,4};
     int last_improved_neighb = -1;
-    random_shuffle(neighb.begin(),neighb.end());
+    for (int k = (int)neighb.size() - 1; k > 0; --k) {
+        std::swap(neighb[k], neighb[rand_r(&g_tl_seed) % (k + 1)]);
+    }
     bool improved = false;
     for(int i=0;i<5;i++) {
         if(neighb[i] != last_improved_neighb) {
@@ -121,7 +123,9 @@ void Search::rvnd_inter() {
 
     vector<int> neighb = {0,1,2,3,4,5};
     int last_improved_neighb = -1;
-    random_shuffle(neighb.begin(),neighb.end());
+    for (int k = (int)neighb.size() - 1; k > 0; --k) {
+        std::swap(neighb[k], neighb[rand_r(&g_tl_seed) % (k + 1)]);
+    }
     bool improved = false;
 
     for(int i=0;i<6;i++) {

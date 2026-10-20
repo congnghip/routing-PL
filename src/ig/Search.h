@@ -22,6 +22,8 @@
 
 using namespace std;
 
+extern thread_local unsigned int g_tl_seed;
+
 class Search {
 public:
     Search(Instance* instance, Config* config);

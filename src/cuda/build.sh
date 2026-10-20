@@ -5,8 +5,8 @@ set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OBJ="$(mktemp -d)"
 for f in "$HERE"/../ig/*.cpp; do
-    g++ -std=c++14 -O2 -w -c "$f" -o "$OBJ/$(basename "${f%.cpp}").o" &
+    g++ -std=c++14 -O2 -fopenmp -w -c "$f" -o "$OBJ/$(basename "${f%.cpp}").o" &
 done
 wait
-nvcc -O3 -arch=sm_86 -std=c++17 -o "$HERE/paco_gpu_solver" "$HERE/paco_gpu_solver.cu" "$OBJ"/*.o
+nvcc -O3 -arch=sm_86 -std=c++17 -Xcompiler -fopenmp -o "$HERE/paco_gpu_solver" "$HERE/paco_gpu_solver.cu" "$OBJ"/*.o
 rm -rf "$OBJ"

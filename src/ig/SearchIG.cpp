@@ -49,14 +49,14 @@ void Search::deconstruct_random(int dec_size) {
 
     for(int i=0;i<dec_size;i++) {
 
-        int i_route = rand()%this->solution->used_routes;
+        int i_route = rand_r(&g_tl_seed)%this->solution->used_routes;
         Route* route = this->solution->routes.at(i_route);
         vector<Sequence>* route_sequences = &route->sequences;
 
-        int i_seq = 1 + rand()%((int)route_sequences->size()-2);
+        int i_seq = 1 + rand_r(&g_tl_seed)%((int)route_sequences->size()-2);
         Sequence* seq = &route_sequences->at(i_seq);
 
-        int i_customer = rand()%((int)seq->customers.size());
+        int i_customer = rand_r(&g_tl_seed)%((int)seq->customers.size());
         Node* customer = seq->customers.at(i_customer);
 
         this->solution->served.at(customer->index) = false;
